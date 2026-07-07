@@ -113,7 +113,17 @@ export async function POST(req: NextRequest) {
     const res = await throttled(() =>
       fetch(WONDER_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          // Present as a real browser — CDC's edge/WAF can 403 bare requests.
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          Origin: "https://wonder.cdc.gov",
+          Referer: "https://wonder.cdc.gov/ucd-icd10-expanded.html",
+        },
         body: body.toString(),
         // WONDER can be slow for big cross-tabs.
         signal: AbortSignal.timeout(55_000),
