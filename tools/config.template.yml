@@ -1,0 +1,12 @@
+# Cloudflare Tunnel config for WONDER Portal.
+# TUNNEL_ID and the credentials file path get filled in tomorrow, right after
+# `cloudflared tunnel create wonder-portal` prints them. This file is then saved
+# as config.yml (same folder).
+
+tunnel: <TUNNEL_ID>
+credentials-file: C:\dev\wonderwall\tools\<TUNNEL_ID>.json
+
+ingress:
+  - hostname: wonderwall.nestadt.org
+    service: http://localhost:3000
+  - service: http_status:404

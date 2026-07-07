@@ -1,0 +1,16 @@
+<service>
+  <id>WonderPortal</id>
+  <name>WONDER Portal</name>
+  <description>CDC WONDER Portal (Next.js) served on http://localhost:3000</description>
+  <executable>C:\Program Files\nodejs\node.exe</executable>
+  <arguments>node_modules\next\dist\bin\next start -p 3000</arguments>
+  <workingdirectory>C:\dev\wonderwall</workingdirectory>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <logpath>C:\dev\wonderwall\logs</logpath>
+  <env name="NODE_ENV" value="production"/>
+</service>

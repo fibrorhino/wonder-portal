@@ -34,6 +34,13 @@ yarn-error.log*
 .env*
 !.env.example
 
+# local hosting: downloaded binaries, tunnel credentials, runtime logs
+/tools/*.exe
+/tools/config.yml
+/tools/*.json
+/tools/*.pem
+/logs/
+
 # vercel
 .vercel
 
