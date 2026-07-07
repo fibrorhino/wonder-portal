@@ -1,7 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
+  /* Pale blue site background, echoing the JHU Center for Suicide Prevention header */
+  --background: #e7f0fa;
   --foreground: #171717;
 }
 
@@ -12,15 +13,30 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* App intentionally stays light in all color schemes. */
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Force light UI regardless of OS theme (data app reads best on white). */
+:root {
+  color-scheme: light;
+}
+
+/* Shared form-control styling used across the query builder / panels. */
+.ctrl {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #cbd5e1;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: #1e293b;
+  background: #fff;
+}
+.ctrl:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: -1px;
 }
