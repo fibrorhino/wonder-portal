@@ -12,16 +12,23 @@ query builder.
 
 ---
 
-## Quick start (local)
+## Quick start (local) — this is the way to use it for live data
 
+> **CDC blocks the Vercel-hosted site's data queries** (it 403s requests from
+> cloud/data-center IPs — confirmed on this deployment). The deployed site loads
+> fine but can't fetch data. **Run it locally** and queries go from *your* IP,
+> which works.
+
+**Easiest:** double-click **`run-locally.bat`** (Windows). It installs deps the
+first time, starts the server, and opens the browser.
+
+**Or manually:**
 ```bash
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000. That's it — **no API key or account needed** for the
-core app. CDC WONDER is queried server-side; when you run locally, requests go
-out from *your* machine's IP.
+Open http://localhost:3000. **No API key or account needed** for the core app.
 
 ### Try it
 1. Click the **Suicide (intent)** cause preset.
