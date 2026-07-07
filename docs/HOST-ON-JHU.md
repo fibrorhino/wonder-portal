@@ -33,23 +33,33 @@ Stop the dev server (Ctrl-C) once confirmed.
 
 ---
 
-## Step 1 — Run the app as an always-on service
+## Step 1 — Run the app as a boot-level Windows service (survives unattended reboot)
 
-Use a production build (faster/stabler than dev) kept alive by **PM2** so it
-restarts on crash and on reboot.
+The machine reboots unattended (e.g. weekly patch reboot) with **no one logged
+in**, so the app must run as a real **Windows service** that starts at *boot*,
+not a "startup" item that waits for login. We use **NSSM** (Non-Sucking Service
+Manager) to wrap the Next.js production server as a service.
 
-```bash
-npm run build
-npm install -g pm2 pm2-windows-startup
+1. Build the production server:
+   ```bash
+   npm run build
+   ```
+2. Download NSSM from https://nssm.cc/download (unzip; use `win64\nssm.exe`).
+3. In an **Administrator** terminal, install the service (adjust paths):
+   ```bat
+   nssm install WonderPortal "C:\Program Files\nodejs\node.exe" "node_modules\next\dist\bin\next start -p 3000"
+   nssm set WonderPortal AppDirectory "C:\dev\wonderwall"
+   nssm set WonderPortal Start SERVICE_AUTO_START
+   nssm set WonderPortal AppStdout "C:\dev\wonderwall\logs\app.log"
+   nssm set WonderPortal AppStderr "C:\dev\wonderwall\logs\app.err.log"
+   nssm start WonderPortal
+   ```
+The app now serves http://localhost:3000 and **auto-starts on every boot**,
+before any login. Manage it with `nssm restart WonderPortal` /
+`nssm stop WonderPortal`, or Windows "Services".
 
-pm2 start "npm run start" --name wonder-portal
-pm2 save
-pm2-startup install       # makes PM2 (and the app) start on Windows boot
-```
-The app now runs at http://localhost:3000 permanently. Useful later:
-`pm2 logs wonder-portal`, `pm2 restart wonder-portal`.
-
-To update after code changes: `git pull && npm run build && pm2 restart wonder-portal`.
+To update after code changes: `git pull && npm run build`, then
+`nssm restart WonderPortal`.
 
 ---
 
