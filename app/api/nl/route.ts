@@ -23,14 +23,25 @@ export async function GET() {
   return NextResponse.json({ enabled: Boolean(apiKey()) });
 }
 
+// Gemini's structured-output schema is a restricted OpenAPI subset that does
+// NOT support `additionalProperties` (dynamic-key objects). So filters are
+// represented as an array of {key, values} pairs instead of a free-form
+// object, and converted back to a Record after parsing.
 const RESPONSE_SCHEMA = {
   type: "object",
   properties: {
     groupBy: { type: "array", items: { type: "string" } },
     measures: { type: "array", items: { type: "string" } },
     filters: {
-      type: "object",
-      additionalProperties: { type: "array", items: { type: "string" } },
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          key: { type: "string" },
+          values: { type: "array", items: { type: "string" } },
+        },
+        required: ["key", "values"],
+      },
     },
     chartType: { type: "string" },
     summary: { type: "string" },
@@ -38,12 +49,30 @@ const RESPONSE_SCHEMA = {
   required: ["groupBy", "measures", "filters", "summary"],
 };
 
+interface LlmRawOutput {
+  groupBy: string[];
+  measures: string[];
+  filters: { key: string; values: string[] }[];
+  chartType?: string;
+  summary: string;
+}
+
 interface LlmOutput {
   groupBy: string[];
   measures: string[];
   filters: Record<string, string[]>;
   chartType?: string;
   summary: string;
+}
+
+function normalizeLlmOutput(raw: LlmRawOutput): LlmOutput {
+  const filters: Record<string, string[]> = {};
+  for (const f of raw.filters ?? []) {
+    if (f?.key && Array.isArray(f.values) && f.values.length > 0) {
+      filters[f.key] = f.values;
+    }
+  }
+  return { groupBy: raw.groupBy, measures: raw.measures, filters, chartType: raw.chartType, summary: raw.summary };
 }
 
 function buildPrompt(userText: string): string {
@@ -55,7 +84,7 @@ ${buildSchemaContext()}
 Rules:
 - groupBy: ordered list of variable keys to group results by (max 5). Put the most important grouping first (e.g. the thing being trended/compared).
 - measures: subset of ["deaths","population","crudeRate","ageAdjustedRate"]. Default to ["deaths"] unless rates are implied.
-- filters: object mapping variable key -> array of value codes to restrict to. Use "year" with 4-digit year strings for date ranges (e.g. ["2019","2020","2021","2022","2023","2024"]). Omit a key entirely if the user didn't restrict it.
+- filters: array of {key, values} pairs restricting variable key -> value codes. Use "year" with 4-digit year strings for date ranges (e.g. ["2019","2020","2021","2022","2023","2024"]). Omit a key entirely if the user didn't restrict it (don't include an entry with empty values).
 - chartType: one of line, bar, stackedBar, horizontalBar, area, scatter, bubble, pie, donut, heatmap, treemap, sunburst, scatter3d — pick whichever best matches what the user described (e.g. "trend over time" -> line). Omit if no figure was requested.
 - summary: one short sentence in plain English restating what query you built, for the user to confirm.
 - Only use variable keys and value codes that appear in the schema above. Never invent a key or code.
@@ -148,13 +177,14 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
 }
 
 export async function POST(req: NextRequest) {
-  const key = apiKey();
-  if (!key) {
+  const maybeKey = apiKey();
+  if (!maybeKey) {
     return NextResponse.json(
       { ok: false, error: "Natural-language queries are not configured. Set GEMINI_API_KEY to enable this feature." },
       { status: 501 },
     );
   }
+  const key: string = maybeKey;
 
   let text: string;
   try {
@@ -167,25 +197,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: "Please enter a question or request." }, { status: 400 });
   }
 
+  // Gemini's free tier occasionally returns transient 503 ("high demand"); a
+  // couple of short retries smooth this over for the user rather than failing
+  // the whole request on a blip.
+  async function callGemini(): Promise<Response> {
+    let lastRes: Response | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
+      const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: buildPrompt(text) }] }],
+          generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: RESPONSE_SCHEMA,
+            temperature: 0.1,
+          },
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (res.ok || res.status !== 503) return res;
+      lastRes = res;
+    }
+    return lastRes!;
+  }
+
   let llmOut: LlmOutput;
   try {
-    const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(key)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(text) }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.1,
-        },
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await callGemini();
     if (!res.ok) {
       const errText = await res.text();
+      const busy = res.status === 503 ? " Gemini is temporarily overloaded — please try again in a moment." : "";
       return NextResponse.json(
-        { ok: false, error: `Gemini API error (HTTP ${res.status}): ${errText.slice(0, 300)}` },
+        { ok: false, error: `Gemini API error (HTTP ${res.status}): ${errText.slice(0, 300)}${busy}` },
         { status: 502 },
       );
     }
@@ -194,7 +239,7 @@ export async function POST(req: NextRequest) {
     if (!raw) {
       return NextResponse.json({ ok: false, error: "Gemini returned no usable response. Try rephrasing." }, { status: 502 });
     }
-    llmOut = JSON.parse(raw);
+    llmOut = normalizeLlmOutput(JSON.parse(raw));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: `Could not reach Gemini: ${msg}` }, { status: 502 });

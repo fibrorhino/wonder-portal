@@ -32,7 +32,7 @@ export default function Home() {
   const [suggestedChartType, setSuggestedChartType] = useState<string | undefined>(undefined);
   const [chartKey, setChartKey] = useState(0);
 
-  const run = async (specToRun: QuerySpec = spec) => {
+  const run = async (specToRun: QuerySpec = spec, landOnTab: Tab = "table") => {
     setLoading(true);
     setError(null);
     try {
@@ -47,7 +47,7 @@ export default function Home() {
         setResult(null);
       } else {
         setResult(data);
-        setTab("table");
+        setTab(landOnTab);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error.");
@@ -62,8 +62,7 @@ export default function Home() {
     setNlWarnings(nl.warnings);
     setSuggestedChartType(nl.chartType);
     setChartKey((k) => k + 1);
-    void run(nl.spec);
-    if (nl.chartType) setTab("chart");
+    void run(nl.spec, nl.chartType ? "chart" : "table");
   };
 
   const table = result?.table;
