@@ -1,0 +1,15 @@
+<service>
+  <id>WonderTunnel</id>
+  <name>WONDER Portal Cloudflare Tunnel</name>
+  <description>Cloudflare Tunnel exposing wonderwall.nestadt.org -> localhost:3000</description>
+  <executable>C:\dev\wonderwall\tools\cloudflared.exe</executable>
+  <arguments>--config C:\dev\wonderwall\tools\config.yml --no-autoupdate tunnel run wonder-portal</arguments>
+  <workingdirectory>C:\dev\wonderwall\tools</workingdirectory>
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="10 sec"/>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+  <logpath>C:\dev\wonderwall\logs</logpath>
+</service>
