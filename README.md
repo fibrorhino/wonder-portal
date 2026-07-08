@@ -6,9 +6,10 @@ table/spreadsheet, build **customizable figures**, and run **basic statistics**
 (regression + r², chi-square, correlation) — things the official WONDER portal
 can't do.
 
-A natural-language query box (LLM-interpreted) is scaffolded but **not enabled
-yet**; everything it will eventually do can already be done with the manual
-query builder.
+A natural-language query box translates plain-English requests into queries
+using the free-tier **Gemini API** — see [Enabling the natural-language
+box](#enabling-the-natural-language-box) below. Everything it does can also be
+done with the manual query builder.
 
 ---
 
@@ -81,19 +82,30 @@ back to running locally (above).
 
 ---
 
-## Enabling the natural-language box (later)
+## Enabling the natural-language box
 
-The box calls `/api/nl`, which is currently a stub. To turn it on you'll add an
-Anthropic API key and implement the interpreter (translate text → `QuerySpec`):
+The box calls `/api/nl`, which uses the **Gemini API** (`gemini-2.5-flash-lite`)
+to translate text into a `QuerySpec`. Gemini's free tier comfortably covers
+personal/light use, so this typically costs nothing.
 
-```bash
-# .env.local
-ANTHROPIC_API_KEY=sk-ant-...
-```
+1. Get a free key at https://aistudio.google.com/apikey (sign in with any
+   Google account — no billing setup required for the free tier).
+2. Add it to `.env.local`:
+   ```bash
+   GEMINI_API_KEY=AIza...
+   ```
+3. Restart the dev server (or restart the `WonderPortal` service if
+   self-hosted). The box lights up automatically once the key is present.
+
+The interpreter is grounded on the real variable/value registry
+(`lib/wonder/schemaContext.ts`) so it can only reference fields and codes that
+actually exist in the D158 database — it can't invent a filter, and the result
+is re-validated server-side against the same rules `/api/wonder` enforces
+(e.g. only one cause-of-death framework per query) before being run.
 
 The whole app is built around one typed contract — `QuerySpec`
-(`lib/wonder/types.ts`) — which both the manual builder and the future LLM will
-produce, so the interpreter drops in without touching the query/chart/stats code.
+(`lib/wonder/types.ts`) — which both the manual builder and the AI box
+produce, so swapping the LLM provider later only touches `app/api/nl/route.ts`.
 
 ---
 

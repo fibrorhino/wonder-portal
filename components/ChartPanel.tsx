@@ -46,14 +46,28 @@ const PALETTES: Record<string, string[]> = {
 
 const isBarLike = (t: ChartType) => ["bar", "stackedBar", "horizontalBar"].includes(t);
 
-export default function ChartPanel({ table }: { table: ResultTable }) {
+const VALID_CHART_TYPES: ChartType[] = [
+  "line", "bar", "stackedBar", "horizontalBar", "area", "scatter", "bubble",
+  "pie", "donut", "heatmap", "treemap", "sunburst", "scatter3d",
+];
+
+export default function ChartPanel({
+  table,
+  initialChartType,
+}: {
+  table: ResultTable;
+  initialChartType?: string;
+}) {
   const dims = dimensionCols(table);
   const measures = measureCols(table);
   const plotRef = useRef<PlotHandle>(null);
   const rows = useMemo(() => dataRows(table), [table]);
 
   const hasTime = dims.some((d) => ["year", "month"].includes(d.column.variableKey ?? ""));
-  const [chartType, setChartType] = useState<ChartType>(hasTime ? "line" : "bar");
+  const suggested = VALID_CHART_TYPES.includes(initialChartType as ChartType)
+    ? (initialChartType as ChartType)
+    : undefined;
+  const [chartType, setChartType] = useState<ChartType>(suggested ?? (hasTime ? "line" : "bar"));
   const [xIdx, setXIdx] = useState(dims[0]?.index ?? 0);
   const [seriesIdx, setSeriesIdx] = useState(dims[1]?.index ?? -1);
   const [measureIdx, setMeasureIdx] = useState(measures[0]?.index ?? 0);

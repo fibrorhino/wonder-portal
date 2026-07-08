@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
 import { DATABASE_LABEL } from "@/lib/wonder/databases";
 import Header from "@/components/Header";
-import NLPromptBox from "@/components/NLPromptBox";
+import NLPromptBox, { type NLResult } from "@/components/NLPromptBox";
 import QueryBuilder from "@/components/QueryBuilder";
 import ResultsTable from "@/components/ResultsTable";
 import ChartPanel from "@/components/ChartPanel";
@@ -27,15 +27,19 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("table");
+  const [nlSummary, setNlSummary] = useState<string | null>(null);
+  const [nlWarnings, setNlWarnings] = useState<string[]>([]);
+  const [suggestedChartType, setSuggestedChartType] = useState<string | undefined>(undefined);
+  const [chartKey, setChartKey] = useState(0);
 
-  const run = async () => {
+  const run = async (specToRun: QuerySpec = spec) => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/wonder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(spec),
+        body: JSON.stringify(specToRun),
       });
       const data: WonderResponse = await res.json();
       if (!data.ok) {
@@ -52,6 +56,16 @@ export default function Home() {
     }
   };
 
+  const handleNLResult = (nl: NLResult) => {
+    setSpec(nl.spec);
+    setNlSummary(nl.summary);
+    setNlWarnings(nl.warnings);
+    setSuggestedChartType(nl.chartType);
+    setChartKey((k) => k + 1);
+    void run(nl.spec);
+    if (nl.chartType) setTab("chart");
+  };
+
   const table = result?.table;
 
   return (
@@ -65,13 +79,21 @@ export default function Home() {
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5">
         <div className="mb-5">
-          <NLPromptBox />
+          <NLPromptBox onResult={handleNLResult} />
         </div>
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[380px_1fr]">
           {/* Left: query builder */}
           <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <QueryBuilder spec={spec} onChange={setSpec} onRun={run} loading={loading} />
+            <QueryBuilder
+              spec={spec}
+              onChange={(s) => {
+                setSpec(s);
+                setNlSummary(null);
+              }}
+              onRun={() => run()}
+              loading={loading}
+            />
           </div>
 
           {/* Right: results */}
@@ -79,6 +101,19 @@ export default function Home() {
             {error && (
               <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {error}
+              </div>
+            )}
+
+            {!error && nlSummary && table && (
+              <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                <p>🤖 {nlSummary}</p>
+                {nlWarnings.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5 text-xs text-blue-700">
+                    {nlWarnings.map((w, i) => (
+                      <li key={i}>{w}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
 
@@ -116,7 +151,9 @@ export default function Home() {
                 </div>
 
                 {tab === "table" && <ResultsTable table={table} />}
-                {tab === "chart" && <ChartPanel table={table} />}
+                {tab === "chart" && (
+                  <ChartPanel key={chartKey} table={table} initialChartType={suggestedChartType} />
+                )}
                 {tab === "stats" && <StatsPanel table={table} />}
 
                 <InsightsPanel table={table} />
