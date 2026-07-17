@@ -89,6 +89,9 @@ Rules:
 - summary: one short sentence in plain English restating what query you built, for the user to confirm.
 - Only use variable keys and value codes that appear in the schema above. Never invent a key or code.
 - Respect the one-cause-of-death-framework-per-query rule.
+- COMPARISONS (important): if the user asks to compare a subgroup against the general population or against other groups, you MUST group by that variable and MUST NOT filter it — filtering to the subgroup removes the comparison groups. Example: "suicide rates among AI/AN youth compared to the US general population" -> groupBy includes "race6" (so AI/AN appears alongside the other race groups), filters do NOT contain race6. Only filter a variable when the user wants results restricted to it alone with no comparison.
+- Do not add groupings the user did not ask for (e.g. don't add sex unless sex was mentioned).
+- AGE RANGES: map requested ages onto the exact codes available. If a requested range (e.g. 10-24) does not align with ten-year group boundaries, use ageFive with the covering five-year codes (e.g. 10-14, 15-19, 20-24) instead of inventing an ageTen code.
 
 User request: """${userText}"""
 
@@ -151,6 +154,23 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
     } else {
       // finder (e.g. year, ucdCause): pass through as-is (free-text codes)
       filters[key] = codes;
+    }
+  }
+
+  // If a variable is grouped AND filtered to a single value, the grouping is
+  // pointless (one category) — the model does this on "compare X to everyone"
+  // requests despite prompt rules. Drop the filter so the comparison works.
+  // (Exempt cause-framework vars: e.g. injuryIntent=Suicide grouped by
+  // mechanism is a legitimate restriction, and time restrictions are fine.)
+  for (const k of groupBy) {
+    const def = VARIABLE_BY_KEY[k];
+    if (!def || def.control?.param === "O_ucd" || k === "year" || k === "month") continue;
+    if (filters[k]?.length === 1) {
+      const label = def.values.find((v) => v.code === filters[k][0])?.label ?? filters[k][0];
+      delete filters[k];
+      warnings.push(
+        `Showing all ${def.label} groups so "${label}" can be compared against the others.`,
+      );
     }
   }
 

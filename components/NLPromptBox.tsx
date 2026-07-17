@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import type { QuerySpec } from "@/lib/wonder/types";
+import { safeJson } from "@/lib/safeJson";
 
 export interface NLResult {
   spec: QuerySpec;
@@ -42,7 +43,12 @@ export default function NLPromptBox({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      const data = await res.json();
+      const parsed = await safeJson<{ ok: boolean; error?: string; spec: QuerySpec; chartType?: string; summary: string; warnings?: string[] }>(res);
+      if (!parsed.ok) {
+        setError(parsed.error);
+        return;
+      }
+      const data = parsed.data;
       if (!data.ok) {
         setError(data.error ?? "Could not interpret that request.");
         return;

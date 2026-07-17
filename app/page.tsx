@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
+import { safeJson } from "@/lib/safeJson";
 import { DATABASE_LABEL } from "@/lib/wonder/databases";
 import Header from "@/components/Header";
 import NLPromptBox, { type NLResult } from "@/components/NLPromptBox";
@@ -41,7 +42,13 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(specToRun),
       });
-      const data: WonderResponse = await res.json();
+      const parsed = await safeJson<WonderResponse>(res);
+      if (!parsed.ok) {
+        setError(parsed.error);
+        setResult(null);
+        return;
+      }
+      const data = parsed.data;
       if (!data.ok) {
         setError(data.error ?? "Query failed.");
         setResult(null);
