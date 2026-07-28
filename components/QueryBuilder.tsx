@@ -8,11 +8,17 @@ import { useMemo, useState } from "react";
 import type { MeasureKey, QuerySpec } from "@/lib/wonder/types";
 import { ALL_MEASURES } from "@/lib/wonder/types";
 import {
-  CAUSE_PRESETS,
+  ICD10_REFERENCE_URL,
+  ICD_PRESETS,
+  INJURY_MECHANISMS,
+  MANNER_OF_DEATH,
+  NATURAL_MANNER_CODE,
+  NONINJURY_MECHANISMS,
   VARIABLES,
   VARIABLE_BY_KEY,
 } from "@/lib/wonder/databases";
 import MultiSelect from "./MultiSelect";
+import PillSelect from "./PillSelect";
 
 const CAUSE_KEYS = ["ucdCause", "injuryIntent", "injuryMechanism", "leadingCauses"];
 const FILTER_KEYS = [
@@ -54,26 +60,35 @@ export default function QueryBuilder({
     setFilters(next);
   };
 
-  const applyPreset = (idx: number) => {
-    const preset = CAUSE_PRESETS[idx];
+  // Manner of Death / Injury Mechanism and ICD-10 codes are two different
+  // WONDER cause frameworks and can't be combined, so selecting one clears
+  // the other.
+  const setInjuryFilter = (key: string, codes: string[]) => {
     const next = { ...spec.filters };
-    for (const k of CAUSE_KEYS) delete next[k];
-    for (const [k, v] of Object.entries(preset.apply)) next[k] = v as string[];
+    delete next.ucdCause;
+    delete next.leadingCauses;
+    setIcdText("");
+    if (codes.length === 0) delete next[key];
+    else next[key] = codes;
     setFilters(next);
-    setIcdText((preset.apply.ucdCause as string[] | undefined)?.join(", ") ?? "");
   };
 
-  const applyIcd = (text: string) => {
+  const applyIcdCodes = (codes: string[], text: string) => {
     setIcdText(text);
-    const codes = text
-      .split(/[,\s]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
     const next = { ...spec.filters };
     for (const k of CAUSE_KEYS) delete next[k];
     if (codes.length) next.ucdCause = codes;
     setFilters(next);
   };
+
+  const applyIcdText = (text: string) =>
+    applyIcdCodes(
+      text.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+      text,
+    );
+
+  const manner = spec.filters.injuryIntent ?? [];
+  const showNonInjury = manner.includes(NATURAL_MANNER_CODE);
 
   // Group-by management
   const addGroup = (key: string) => {
@@ -111,62 +126,101 @@ export default function QueryBuilder({
 
   return (
     <div className="space-y-5">
-      {/* Cause of death */}
+      {/* Manner of Death */}
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-800">
-          Cause of death
+          Manner of Death{" "}
+          <span className="font-normal text-slate-500">
+            (select all that apply)
+          </span>
         </h3>
-        <div className="flex flex-wrap gap-2">
-          {CAUSE_PRESETS.map((p, i) => (
-            <button
-              key={p.label}
-              type="button"
-              onClick={() => applyPreset(i)}
-              className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:border-blue-400 hover:bg-blue-50"
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <div className="mt-3">
-          <label className="text-xs font-medium text-slate-600">
-            Advanced: ICD-10 codes (comma/space separated, e.g. X60-X84, U03, Y87.0)
-          </label>
-          <input
-            value={icdText}
-            onChange={(e) => applyIcd(e.target.value)}
-            placeholder="Leave blank for all causes"
-            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-          />
-        </div>
-        {/* injury mechanism / intent as filters */}
+        <PillSelect
+          options={MANNER_OF_DEATH}
+          selected={manner}
+          onChange={(codes) => setInjuryFilter("injuryIntent", codes)}
+          allLabel="All Manners"
+        />
+
+        {/* Advanced: ICD-10 codes */}
+        <details className="mt-3 rounded-lg border border-slate-200">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600">
+            Advanced: specify ICD-10 cause codes
+          </summary>
+          <div className="border-t border-slate-100 px-3 py-2">
+            <div className="flex flex-wrap gap-2">
+              {ICD_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => applyIcdCodes(p.codes, p.codes.join(", "))}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:border-blue-400 hover:bg-blue-50"
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={icdText}
+              onChange={(e) => applyIcdText(e.target.value)}
+              placeholder="e.g. X60-X84, U03, Y87.0 — leave blank for all causes"
+              className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              Using ICD-10 codes replaces the Manner of Death selection.{" "}
+              <a
+                href={ICD10_REFERENCE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:underline"
+              >
+                Browse ICD-10 codes ↗
+              </a>
+            </p>
+          </div>
+        </details>
+
+        {/* Injury mechanism (top 20) + Non-Injury causes when Natural is selected */}
         <div className="mt-3 space-y-2">
-          {["injuryMechanism", "injuryIntent"].map((k) => {
-            const v = VARIABLE_BY_KEY[k];
-            return (
-              <MultiSelect
-                key={k}
-                title={v.label}
-                note={v.note}
-                options={v.values}
-                selected={spec.filters[k] ?? []}
-                onChange={(codes) => {
-                  // choosing an injury-framework filter clears the ICD framework
-                  const next = { ...spec.filters };
-                  delete next.ucdCause;
-                  setIcdText("");
-                  if (codes.length === 0) delete next[k];
-                  else next[k] = codes;
-                  setFilters(next);
-                }}
-              />
-            );
-          })}
+          <MultiSelect
+            title="Injury Mechanism"
+            note="Most common suicide methods listed first."
+            options={INJURY_MECHANISMS}
+            selected={(spec.filters.injuryMechanism ?? []).filter((c) =>
+              c.startsWith("GRINJ"),
+            )}
+            onChange={(codes) =>
+              setInjuryFilter("injuryMechanism", [
+                ...codes,
+                ...(spec.filters.injuryMechanism ?? []).filter((c) =>
+                  c.startsWith("GR113"),
+                ),
+              ])
+            }
+          />
+          {showNonInjury && (
+            <MultiSelect
+              title="Non-Injury Causes"
+              note="Disease/natural causes — shown because “Natural” is selected."
+              options={NONINJURY_MECHANISMS}
+              selected={(spec.filters.injuryMechanism ?? []).filter((c) =>
+                c.startsWith("GR113"),
+              )}
+              onChange={(codes) =>
+                setInjuryFilter("injuryMechanism", [
+                  ...(spec.filters.injuryMechanism ?? []).filter((c) =>
+                    c.startsWith("GRINJ"),
+                  ),
+                  ...codes,
+                ])
+              }
+            />
+          )}
         </div>
+
         {activeCause.length > 1 && (
           <p className="mt-2 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
             Only one cause framework can be used per query. Keep just one of:
-            ICD codes, injury intent/mechanism, or leading causes.
+            ICD codes, Manner of Death / Injury Mechanism, or leading causes.
           </p>
         )}
       </section>

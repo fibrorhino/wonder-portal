@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
 import { safeJson } from "@/lib/safeJson";
+import { filterChips } from "@/lib/describeSpec";
 import { DATABASE_LABEL } from "@/lib/wonder/databases";
 import Header from "@/components/Header";
 import NLPromptBox, { type NLResult } from "@/components/NLPromptBox";
@@ -156,13 +157,39 @@ export default function Home() {
                   ))}
                 </div>
 
+                {/* Active filters that produced these results */}
+                {result?.spec && (
+                  <div className="mb-3 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs font-medium text-slate-500">Filters:</span>
+                    {filterChips(result.spec).length === 0 ? (
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                        None (all deaths, all years)
+                      </span>
+                    ) : (
+                      filterChips(result.spec).map((c) => (
+                        <span
+                          key={c.key}
+                          className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-800"
+                        >
+                          <span className="font-medium">{c.label}:</span> {c.value}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                )}
+
                 {tab === "table" && <ResultsTable table={table} />}
                 {tab === "chart" && (
-                  <ChartPanel key={chartKey} table={table} initialChartType={suggestedChartType} />
+                  <ChartPanel
+                    key={chartKey}
+                    table={table}
+                    initialChartType={suggestedChartType}
+                    spec={result?.spec}
+                  />
                 )}
                 {tab === "stats" && <StatsPanel table={table} />}
 
-                <InsightsPanel table={table} />
+                <InsightsPanel table={table} spec={result?.spec} />
               </>
             )}
           </div>

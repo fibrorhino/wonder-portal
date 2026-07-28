@@ -321,3 +321,61 @@ export const CAUSE_PRESETS: CausePreset[] = [
 export function variableLabel(key: string): string {
   return VARIABLE_BY_KEY[key]?.label ?? key;
 }
+
+// ---- Manner of Death (Injury Intent, V22) as multi-select pills ----
+// Requested labels/order; "Accident" = Unintentional (1), "Natural" =
+// Non-Injury, no intent (9). "All Manners" = clear the filter (handled in UI).
+export const MANNER_OF_DEATH: VariableValue[] = [
+  { code: "2", label: "Suicide" },
+  { code: "3", label: "Homicide" },
+  { code: "1", label: "Accident" },
+  { code: "4", label: "Undetermined" },
+  { code: "5", label: "Legal Intervention" },
+  { code: "9", label: "Natural" },
+];
+// When this manner (Non-Injury) is selected, the Non-Injury mechanism list is
+// meaningful, so the UI reveals it.
+export const NATURAL_MANNER_CODE = "9";
+
+// Injury mechanisms (V23 GRINJ-*) reordered to lead with the most prevalent
+// suicide methods; the Non-Injury (GR113-*) disease categories are separated.
+const MECHANISM_TOP_ORDER = [
+  "GRINJ-006", // Firearm
+  "GRINJ-017", // Suffocation
+  "GRINJ-015", // Poisoning
+  "GRINJ-003", // Fall
+  "GRINJ-002", // Drowning
+  "GRINJ-001", // Cut/Pierce
+  "GRINJ-004", // Fire/Flame
+  "GRINJ-008", // Motor Vehicle Traffic
+  "GRINJ-005", "GRINJ-007", "GRINJ-009", "GRINJ-010", "GRINJ-011", "GRINJ-012",
+  "GRINJ-013", "GRINJ-014", "GRINJ-016", "GRINJ-018", "GRINJ-019", "GRINJ-020",
+];
+
+const V23_VALUES = VARIABLE_BY_KEY.injuryMechanism?.values ?? [];
+
+// Top injury mechanisms, in the prevalence order above.
+export const INJURY_MECHANISMS: VariableValue[] = MECHANISM_TOP_ORDER
+  .map((code) => V23_VALUES.find((v) => v.code === code))
+  .filter((v): v is VariableValue => Boolean(v));
+
+// Non-Injury disease categories, with the "Non-Injury: " prefix stripped for display.
+export const NONINJURY_MECHANISMS: VariableValue[] = V23_VALUES
+  .filter((v) => v.code.startsWith("GR113"))
+  .map((v) => ({ code: v.code, label: v.label.replace(/^Non-Injury:\s*/, "") }));
+
+// ICD-10 code presets for the advanced cause box.
+export const ICD_PRESETS: { label: string; codes: string[] }[] = [
+  {
+    label: "Suicide (X60–X84, U03, Y87.0)",
+    codes: [...Array.from({ length: 25 }, (_, i) => `X${60 + i}`), "U03", "Y87.0"],
+  },
+  {
+    label: "Drug overdose (X40–X44, X60–X64, X85, Y10–Y14)",
+    codes: ["X40", "X41", "X42", "X43", "X44", "X60", "X61", "X62", "X63", "X64", "X85", "Y10", "Y11", "Y12", "Y13", "Y14"],
+  },
+];
+
+// WHO ICD-10 browser (Chapter XX = external causes of morbidity and mortality,
+// the most relevant chapter for injury/suicide coding).
+export const ICD10_REFERENCE_URL = "https://icd.who.int/browse10/2019/en#/XX";

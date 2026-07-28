@@ -7,7 +7,8 @@
 
 import { useMemo, useRef, useState } from "react";
 import Plot, { type PlotHandle } from "./Plot";
-import type { ResultTable } from "@/lib/wonder/types";
+import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
+import { describeFilters } from "@/lib/describeSpec";
 import {
   cellLabel,
   cellNumber,
@@ -54,9 +55,11 @@ const VALID_CHART_TYPES: ChartType[] = [
 export default function ChartPanel({
   table,
   initialChartType,
+  spec,
 }: {
   table: ResultTable;
   initialChartType?: string;
+  spec?: QuerySpec;
 }) {
   const dims = dimensionCols(table);
   const measures = measureCols(table);
@@ -81,6 +84,11 @@ export default function ChartPanel({
   const [smooth, setSmooth] = useState(false);
   const [sortDesc, setSortDesc] = useState(false);
   const [legendPos, setLegendPos] = useState<"top" | "right" | "bottom">("bottom");
+  const [showFilters, setShowFilters] = useState(true);
+
+  // Caption describing the active filters, drawn onto the figure so exported
+  // images/slides remain self-explanatory.
+  const filterCaption = spec ? describeFilters(spec) : "";
 
   const xCol = table.columns[xIdx];
   const yCol = table.columns[measureIdx];
@@ -287,12 +295,31 @@ export default function ChartPanel({
   }, [legendPos]);
 
   const layout = useMemo(() => {
+    // Filter caption pinned below the plot so it is included in PNG/SVG exports.
+    const captionAnno =
+      showFilters && filterCaption
+        ? [
+            {
+              xref: "paper",
+              yref: "paper",
+              x: 0,
+              y: legendPos === "bottom" ? -0.3 : -0.16,
+              xanchor: "left",
+              yanchor: "top",
+              showarrow: false,
+              align: "left",
+              text: `<i>${filterCaption}</i>`,
+              font: { size: 10, color: "#64748b" },
+            },
+          ]
+        : [];
     const base: Record<string, unknown> = {
       title: { text: title || undefined, font: { size: 16 } },
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
+      margin: { t: 50, r: 20, b: showFilters && filterCaption ? 110 : 60, l: 70 },
       legend,
-      annotations,
+      annotations: [...annotations, ...captionAnno],
       colorway: PALETTES[palette],
     };
     // 3D scatter uses a `scene` (not cartesian x/y axes).
@@ -317,7 +344,7 @@ export default function ChartPanel({
       xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
       yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
     };
-  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns]);
+  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, legendPos, annotations, palette, table.columns, showFilters, filterCaption]);
 
   if (measures.length === 0 || dims.length === 0) {
     return <p className="text-sm text-slate-500">No chartable data.</p>;
@@ -380,6 +407,9 @@ export default function ChartPanel({
       {/* toggles */}
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-700">
         <Toggle label="Data labels" checked={dataLabels} onChange={setDataLabels} />
+        {filterCaption && (
+          <Toggle label="Show filters on figure" checked={showFilters} onChange={setShowFilters} />
+        )}
         {!isPie && <Toggle label="Log Y axis" checked={logY} onChange={setLogY} />}
         {(chartType === "line" || chartType === "area") && <Toggle label="Smooth" checked={smooth} onChange={setSmooth} />}
         {(isBarLike(chartType) || isPie) && <Toggle label="Sort by value" checked={sortDesc} onChange={setSortDesc} />}
@@ -407,7 +437,7 @@ export default function ChartPanel({
             const png = await plotRef.current?.toImage().catch(() => null);
             await exportPptx(
               table,
-              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value" },
+              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption },
               png ?? null,
             );
           }}

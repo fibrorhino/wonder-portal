@@ -15,6 +15,8 @@ export interface PptxChartConfig {
   measureIdx: number;
   title: string;
   measureLabel: string;
+  /** Human-readable summary of the active filters, shown under the title. */
+  filterCaption?: string;
 }
 
 // chartType -> native PowerPoint chart, or null to fall back to an image.
@@ -71,7 +73,12 @@ export async function exportPptx(
 
   const slide = pptx.addSlide();
   const title = cfg.title || "CDC WONDER figure";
-  slide.addText(title, { x: 0.5, y: 0.3, w: 12.3, h: 0.6, fontSize: 22, bold: true, color: "002D72" });
+  slide.addText(title, { x: 0.5, y: 0.3, w: 12.3, h: 0.5, fontSize: 22, bold: true, color: "002D72" });
+  if (cfg.filterCaption) {
+    slide.addText(cfg.filterCaption, {
+      x: 0.5, y: 0.78, w: 12.3, h: 0.3, fontSize: 11, italic: true, color: "64748B",
+    });
+  }
 
   const native = nativeType(cfg.chartType);
   const { xVals, seriesNames, vmap } = buildSeries(table, cfg);
