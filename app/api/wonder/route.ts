@@ -110,31 +110,39 @@ export async function POST(req: NextRequest) {
       request_xml: xmlRequest,
       accept_datause_restrictions: "true",
     });
-    const res = await throttled(() =>
+    // A long-lived server reuses TCP connections (keep-alive). If CDC's edge
+    // flags one, every subsequent request on it is denied instantly with 403 —
+    // which is why a fresh process works while the service keeps failing.
+    // `Connection: close` forces a new connection per request, and a 403 is
+    // retried (rather than surfaced) so a single poisoned connection can't
+    // break the app. We deliberately do NOT spoof a browser User-Agent: it
+    // never helped, and claiming to be Chrome without a browser TLS
+    // fingerprint is itself a bot-detection trigger.
+    const doFetch = () =>
       fetch(WONDER_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          // Present as a real browser — CDC's edge/WAF can 403 bare requests.
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.9",
-          Origin: "https://wonder.cdc.gov",
-          Referer: "https://wonder.cdc.gov/ucd-icd10-expanded.html",
+          Accept: "text/xml, text/html, */*",
+          Connection: "close",
         },
         body: body.toString(),
         // WONDER can be slow for big cross-tabs.
         signal: AbortSignal.timeout(55_000),
-      }),
-    );
+      });
+
+    let res = await throttled(doFetch);
+    for (let attempt = 0; attempt < 2 && res.status === 403; attempt++) {
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      res = await throttled(doFetch);
+    }
+
     xml = await res.text();
     if (!res.ok) {
       const detail = extractError(xml) ?? `HTTP ${res.status}`;
       const blocked =
         res.status === 403
-          ? " CDC may be blocking requests from this server's IP (common for cloud hosts). Try running the app locally."
+          ? " CDC's edge is refusing requests from this server right now. This usually clears on its own; if it persists, restarting the app (which opens fresh connections) typically resolves it."
           : "";
       return NextResponse.json(
         {
