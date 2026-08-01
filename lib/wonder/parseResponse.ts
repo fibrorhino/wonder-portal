@@ -120,7 +120,7 @@ export function parseResponse(xml: string, spec: QuerySpec): ResultTable {
   const caveats = extractCaveats(xml);
 
   if (!dtMatch) {
-    return { columns, rows, rowIsTotal, caveats, rowCount: 0 };
+    return projectMeasures({ columns, rows, rowIsTotal, caveats, rowCount: 0 }, spec);
   }
 
   const rowXmls = dtMatch[1].match(/<r>[\s\S]*?<\/r>/g) ?? [];
@@ -184,7 +184,32 @@ export function parseResponse(xml: string, spec: QuerySpec): ResultTable {
   }
 
   const dataCount = rowIsTotal.filter((t) => !t).length;
-  return { columns, rows, rowIsTotal, caveats, rowCount: dataCount };
+  return projectMeasures({ columns, rows, rowIsTotal, caveats, rowCount: dataCount }, spec);
+}
+
+/**
+ * WONDER requires M1-M3 (deaths, population, crude rate) on every request, so
+ * the response always carries them and the parser must read all of them to
+ * stay aligned with the response cells. The user's measure checkboxes, though,
+ * are about what they want to SEE — before this, unticking Population or Crude
+ * Rate had no effect at all. Drop the unrequested measure columns here, after
+ * parsing. Deaths is always kept: it is the primary measure (its checkbox is
+ * fixed on in the UI) and the chi-square test uses it for cell weights.
+ */
+function projectMeasures(table: ResultTable, spec: QuerySpec): ResultTable {
+  const wanted = new Set(spec.measures ?? []);
+  const keep = table.columns.map(
+    (c) =>
+      c.kind !== "measure" ||
+      c.measureKey === "deaths" ||
+      (c.measureKey !== undefined && wanted.has(c.measureKey)),
+  );
+  if (keep.every(Boolean)) return table;
+  return {
+    ...table,
+    columns: table.columns.filter((_, i) => keep[i]),
+    rows: table.rows.map((row) => row.filter((_, i) => keep[i])),
+  };
 }
 
 function extractCaveats(xml: string): string[] {

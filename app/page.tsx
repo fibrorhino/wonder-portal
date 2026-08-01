@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
 import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
@@ -59,6 +59,7 @@ export default function Home() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error.");
+      setResult(null);
     } finally {
       setLoading(false);
     }
@@ -74,6 +75,16 @@ export default function Home() {
   };
 
   const table = result?.table;
+
+  // The chart and stats panels address columns by numeric index. When a new
+  // query returns a different column layout those indices point at the wrong
+  // column (silently charting/analysing the wrong field), so the panels are
+  // keyed on the column signature and remount when the shape changes. A query
+  // with the same shape but different filters keeps the user's chart settings.
+  const shapeKey = useMemo(
+    () => (table ? table.columns.map((c) => c.key).join("|") : ""),
+    [table],
+  );
 
   return (
     <div className="flex min-h-full flex-col bg-[#e7f0fa]">
@@ -181,13 +192,13 @@ export default function Home() {
                 {tab === "table" && <ResultsTable table={table} />}
                 {tab === "chart" && (
                   <ChartPanel
-                    key={chartKey}
+                    key={`${chartKey}:${shapeKey}`}
                     table={table}
                     initialChartType={suggestedChartType}
                     spec={result?.spec}
                   />
                 )}
-                {tab === "stats" && <StatsPanel table={table} />}
+                {tab === "stats" && <StatsPanel key={shapeKey} table={table} />}
 
                 <InsightsPanel table={table} spec={result?.spec} />
               </>

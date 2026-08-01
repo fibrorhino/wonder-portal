@@ -1,0 +1,16 @@
+// Test-only build: compiles the pure-computation modules (lib/stats, lib/wonder) to
+// CommonJS in .test-out/ so Node's built-in test runner can execute them.
+// The app itself is unaffected (tsconfig.json stays noEmit).
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": ".test-out",
+    "types": ["node"]
+  },
+  "include": ["lib/stats/**/*.ts", "lib/wonder/**/*.ts"]
+}

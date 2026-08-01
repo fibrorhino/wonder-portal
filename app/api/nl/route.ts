@@ -14,6 +14,7 @@ export const runtime = "nodejs";
 
 const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+const MAX_PROMPT_CHARS = 2000;
 
 function apiKey(): string | null {
   return process.env.GEMINI_API_KEY || null;
@@ -215,6 +216,15 @@ export async function POST(req: NextRequest) {
   }
   if (!text) {
     return NextResponse.json({ ok: false, error: "Please enter a question or request." }, { status: 400 });
+  }
+  // The site is public and this endpoint spends the deployment's Gemini quota,
+  // so cap the prompt size. A real question about mortality data is nowhere
+  // near this long.
+  if (text.length > MAX_PROMPT_CHARS) {
+    return NextResponse.json(
+      { ok: false, error: `That request is too long (${text.length} characters; limit ${MAX_PROMPT_CHARS}). Please shorten it.` },
+      { status: 413 },
+    );
   }
 
   // Gemini's free tier occasionally returns transient 503 ("high demand"); a

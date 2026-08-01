@@ -57,8 +57,22 @@ export function oneWayAnova(groups: number[][]): AnovaResult | null {
   const dfWithin = N - k;
   const msB = ssBetween / dfBetween;
   const msW = ssWithin / dfWithin;
-  const f = msW > 0 ? msB / msW : Infinity;
-  const pValue = Number.isFinite(f) ? fUpperP(f, dfBetween, dfWithin) : 0;
+  // With no within-group variance, F is msB/0. That is only "infinitely
+  // significant" if the group means actually differ — when every value is
+  // identical it is 0/0, i.e. no difference at all, so p must be 1. The
+  // previous unconditional Infinity reported identical groups as p < 0.001.
+  let f: number;
+  let pValue: number;
+  if (msW > 0) {
+    f = msB / msW;
+    pValue = fUpperP(f, dfBetween, dfWithin);
+  } else if (ssBetween === 0) {
+    f = 0;
+    pValue = 1;
+  } else {
+    f = Infinity;
+    pValue = 0;
+  }
   const ssTotal = ssBetween + ssWithin;
   return {
     f,

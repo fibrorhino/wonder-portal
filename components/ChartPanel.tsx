@@ -107,7 +107,7 @@ export default function ChartPanel({
         if (y === null) continue;
         byCat.set(cat, (byCat.get(cat) ?? 0) + y);
       }
-      let entries = [...byCat.entries()];
+      const entries = [...byCat.entries()];
       if (sortDesc) entries.sort((a, b) => b[1] - a[1]);
       return {
         data: [
@@ -223,7 +223,7 @@ export default function ChartPanel({
     }
 
     // Optional sort (single-series categorical charts)
-    let seriesEntries = [...seriesMap.entries()];
+    const seriesEntries = [...seriesMap.entries()];
     if (sortDesc && seriesEntries.length === 1 && !useNumericX) {
       const s = seriesEntries[0][1];
       const order = s.y.map((_, i) => i).sort((a, b) => s.y[b] - s.y[a]);
@@ -286,7 +286,8 @@ export default function ChartPanel({
     }
 
     return { data: traces, annotations: annos, regressionNote: note };
-  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, logY, dataLabels, smooth, sortDesc, xCol, yCol]);
+    // logY is deliberately absent: it only affects the axis type in `layout`.
+  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, dataLabels, smooth, sortDesc, xCol, yCol]);
 
   const legend = useMemo(() => {
     if (legendPos === "right") return { orientation: "v" as const, x: 1.02, y: 1, xanchor: "left" as const };
@@ -371,7 +372,18 @@ export default function ChartPanel({
           </select>
         </Field>
         <Field label={isPie ? "Category" : "X axis"}>
-          <select value={xIdx} onChange={(e) => setXIdx(Number(e.target.value))} className="ctrl">
+          <select
+            value={xIdx}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setXIdx(next);
+              // The series select excludes the X dimension, so a series that
+              // just became X would leave the control showing a stale value
+              // and plot one dimension against itself.
+              if (seriesIdx === next) setSeriesIdx(-1);
+            }}
+            className="ctrl"
+          >
             {dims.map((d) => <option key={d.index} value={d.index}>{d.column.label}</option>)}
           </select>
         </Field>

@@ -7,7 +7,9 @@ import { MANNER_OF_DEATH, VARIABLE_BY_KEY } from "./wonder/databases";
 
 /** Collapse a sorted year list into ranges: 2019,2020,2021,2024 -> "2019–2021, 2024". */
 function summarizeYears(codes: string[]): string {
-  const years = codes.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  const years = [...new Set(codes.map(Number).filter(Number.isFinite))].sort(
+    (a, b) => a - b,
+  );
   if (years.length === 0) return codes.join(", ");
   const parts: string[] = [];
   let start = years[0];

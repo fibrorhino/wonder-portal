@@ -8,9 +8,11 @@ import { DATABASE_ID, MEASURE_CODES, VARIABLE_BY_KEY } from "./databases";
 // Finder variables present in D158 (residence-only set that the API accepts).
 const FINDER_VARS = ["V1", "V10", "V2", "V27", "V9"];
 // Value variables we set defaults for (superset of what the UI exposes).
+// V44 (Single/Multi Race, 31 groups) is exposed as the `race31` variable, so
+// its default must be sent like every other race variable's.
 const VALUE_VARS = [
   "V11", "V12", "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24",
-  "V28", "V4", "V42", "V43", "V45", "V5", "V51", "V52", "V7",
+  "V28", "V4", "V42", "V43", "V44", "V45", "V5", "V51", "V52", "V7",
 ];
 
 function escapeXml(s: string): string {
@@ -81,8 +83,8 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   set(`VM_${db}.M6_${db}.V7`, "*All*");
 
   // --- Value-variable defaults ---
-  for (const v of VALUE_VARS) set(`V_${db}.${v}`, v === "V6" ? "00" : "*All*");
-  set(`V_${db}.V6`, "00");
+  for (const v of VALUE_VARS) set(`V_${db}.${v}`, "*All*");
+  set(`V_${db}.V6`, "00"); // Infant Age Groups: "00" = all infant ages
 
   // --- Apply controls for any grouped variable (age/race/cause selectors) ---
   for (const key of groupBy) {

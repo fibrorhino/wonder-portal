@@ -23,16 +23,26 @@ const Plot = forwardRef<PlotHandle, PlotProps>(function Plot(
 ) {
   const elRef = useRef<HTMLDivElement>(null);
   const plotlyRef = useRef<typeof Plotly | null>(null);
+  const traceTypesRef = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       const mod = (await import("plotly.js-dist-min")).default;
       if (!mounted || !elRef.current) return;
-      // Purge first so switching between fundamentally different trace types
-      // (e.g. cartesian -> pie) starts from a clean slate.
-      if (plotlyRef.current) mod.purge(elRef.current);
       plotlyRef.current = mod;
+      // Switching between fundamentally different trace types (e.g. cartesian
+      // -> pie) leaves stale axes behind, so purge in that case only. For
+      // everything else — toggling data labels, recolouring, sorting —
+      // Plotly.react updates in place, which avoids a full redraw flash and
+      // keeps the user's zoom/pan.
+      const traceTypes = data
+        .map((d) => (d as { type?: string })?.type ?? "")
+        .join(",");
+      if (traceTypesRef.current !== null && traceTypesRef.current !== traceTypes) {
+        mod.purge(elRef.current);
+      }
+      traceTypesRef.current = traceTypes;
       await mod.react(elRef.current, data, {
         margin: { t: 40, r: 20, b: 60, l: 70 },
         font: { family: "Arial, Helvetica, sans-serif" },
@@ -40,12 +50,18 @@ const Plot = forwardRef<PlotHandle, PlotProps>(function Plot(
         ...layout,
       }, { responsive: true, displaylogo: false });
     })();
-    const el = elRef.current;
     return () => {
       mounted = false;
-      if (el && plotlyRef.current) plotlyRef.current.purge(el);
     };
   }, [data, layout]);
+
+  // Tear the plot down only when the component actually unmounts.
+  useEffect(() => {
+    const el = elRef.current;
+    return () => {
+      if (el && plotlyRef.current) plotlyRef.current.purge(el);
+    };
+  }, []);
 
   useImperativeHandle(ref, () => ({
     download(format, filename) {

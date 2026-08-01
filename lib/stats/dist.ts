@@ -21,6 +21,12 @@ export function logGamma(z: number): number {
 export function regIncompleteBeta(x: number, a: number, b: number): number {
   if (x <= 0) return 0;
   if (x >= 1) return 1;
+  // The continued fraction below only converges quickly for
+  // x < (a+1)/(a+b+2); past that it stalls and returns a badly wrong value.
+  // Use the symmetry I_x(a,b) = 1 - I_{1-x}(b,a) to stay in the good region.
+  // Without this, t-tests on a near-zero slope (x -> 1) returned p ~ 0.01
+  // instead of p ~ 1 — i.e. "significant" for a perfectly flat trend.
+  if (x > (a + 1) / (a + b + 2)) return 1 - regIncompleteBeta(1 - x, b, a);
   const lbeta =
     logGamma(a + b) - logGamma(a) - logGamma(b) + a * Math.log(x) + b * Math.log(1 - x);
   const front = Math.exp(lbeta) / a;
@@ -45,19 +51,20 @@ export function regIncompleteBeta(x: number, a: number, b: number): number {
   return Math.min(Math.max(front * (f - 1), 0), 1);
 }
 
-/** Regularized lower incomplete gamma P(s, x). */
-export function regIncompleteGammaLower(s: number, x: number): number {
-  if (x <= 0) return 0;
-  if (x < s + 1) {
-    let sum = 1 / s;
-    let term = sum;
-    for (let k = 1; k < 500; k++) {
-      term *= x / (s + k);
-      sum += term;
-      if (Math.abs(term) < Math.abs(sum) * 1e-13) break;
-    }
-    return sum * Math.exp(-x + s * Math.log(x) - logGamma(s));
+/** Regularized lower incomplete gamma P(s, x) — series expansion. */
+function gammaSeries(s: number, x: number): number {
+  let sum = 1 / s;
+  let term = sum;
+  for (let k = 1; k < 500; k++) {
+    term *= x / (s + k);
+    sum += term;
+    if (Math.abs(term) < Math.abs(sum) * 1e-13) break;
   }
+  return sum * Math.exp(-x + s * Math.log(x) - logGamma(s));
+}
+
+/** Regularized UPPER incomplete gamma Q(s, x) — continued fraction. */
+function gammaContinuedFraction(s: number, x: number): number {
   let b = x + 1 - s;
   let c = 1e300;
   let d = 1 / b;
@@ -74,7 +81,24 @@ export function regIncompleteGammaLower(s: number, x: number): number {
     h *= del;
     if (Math.abs(del - 1) < 1e-12) break;
   }
-  return 1 - Math.exp(-x + s * Math.log(x) - logGamma(s)) * h;
+  return Math.exp(-x + s * Math.log(x) - logGamma(s)) * h;
+}
+
+/** Regularized lower incomplete gamma P(s, x). */
+export function regIncompleteGammaLower(s: number, x: number): number {
+  if (x <= 0) return 0;
+  return x < s + 1 ? gammaSeries(s, x) : 1 - gammaContinuedFraction(s, x);
+}
+
+/**
+ * Regularized UPPER incomplete gamma Q(s, x) = 1 - P(s, x), computed directly
+ * rather than as `1 - P`. Q is what the chi-square p-value needs, and for large
+ * x it is far smaller than machine epsilon relative to 1 — computing it by
+ * subtraction collapses to exactly 0 (e.g. chi2=100, df=1 has p ~ 1.5e-23).
+ */
+export function regIncompleteGammaUpper(s: number, x: number): number {
+  if (x <= 0) return 1;
+  return x < s + 1 ? 1 - gammaSeries(s, x) : gammaContinuedFraction(s, x);
 }
 
 /** Two-sided p-value for Student's t with df degrees of freedom. */
@@ -94,5 +118,5 @@ export function fUpperP(f: number, d1: number, d2: number): number {
 /** Upper-tail p-value for chi-square with k degrees of freedom. */
 export function chiSquareUpperP(chi2: number, k: number): number {
   if (chi2 <= 0 || k <= 0) return 1;
-  return 1 - regIncompleteGammaLower(k / 2, chi2 / 2);
+  return regIncompleteGammaUpper(k / 2, chi2 / 2);
 }

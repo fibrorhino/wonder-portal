@@ -125,6 +125,18 @@ lib/
   tableUtils.ts, cache.ts
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+Compiles the pure-computation modules (`lib/stats`, `lib/wonder`) and runs them
+under Node's built-in test runner — no test framework dependency. Covers the
+distribution functions against published t / chi-square / F values, the
+regression and ANOVA degenerate cases, and the WONDER XML parser's row/column
+alignment. Run it after touching anything under `lib/`.
+
 ### Data notes / caveats
 - **National data only.** WONDER's API blocks sub-national (state/county)
   breakdowns for privacy, so Wonderwall doesn't offer geographic grouping.

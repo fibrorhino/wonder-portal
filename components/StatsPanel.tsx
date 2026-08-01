@@ -35,10 +35,13 @@ function fmtNum(x: number, d = 2): string {
 }
 
 export default function StatsPanel({ table }: { table: ResultTable }) {
-  const dims = dimensionCols(table);
-  const measures = measureCols(table);
+  const dims = useMemo(() => dimensionCols(table), [table]);
+  const measures = useMemo(() => measureCols(table), [table]);
   const rows = useMemo(() => dataRows(table), [table]);
-  const numericDims = dims.filter((d) => NUMERIC_KEYS.includes(d.column.variableKey ?? ""));
+  const numericDims = useMemo(
+    () => dims.filter((d) => NUMERIC_KEYS.includes(d.column.variableKey ?? "")),
+    [dims],
+  );
 
   const [mode, setMode] = useState<Mode>(numericDims.length > 0 ? "regression" : "descriptive");
   const [xIdx, setXIdx] = useState(numericDims[0]?.index ?? dims[0]?.index ?? 0);

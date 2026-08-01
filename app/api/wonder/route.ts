@@ -32,26 +32,49 @@ function validate(spec: QuerySpec): string | null {
   for (const key of Object.keys(spec.filters ?? {})) {
     if (!VARIABLE_BY_KEY[key]) return `Unknown filter variable: ${key}`;
   }
-  // WONDER's cause-of-death section is a single radio (O_ucd): only one cause
-  // framework (ICD codes | injury intent/mechanism | leading causes) may be
-  // used per query, whether for grouping or filtering.
+  // Several WONDER sections are a single radio: O_ucd selects WHICH cause
+  // framework the query uses (ICD codes | injury intent/mechanism | leading
+  // causes), O_age which age variable, O_race which race variable. Two
+  // variables sharing a selector but needing different values cannot coexist
+  // in one query — and that applies to FILTERS as much as to grouping.
+  // Filtering on both Ten-Year and Five-Year age groups, for instance, used to
+  // be accepted here and then resolved to whichever selector was written last,
+  // so the query silently ran with one of the two age filters ignored.
   const usedKeys = [
     ...spec.groupBy,
     ...Object.entries(spec.filters ?? {})
       .filter(([, v]) => v && v.length > 0)
       .map(([k]) => k),
   ];
-  const ucdValues = new Set(
-    usedKeys
-      .map((k) => VARIABLE_BY_KEY[k]?.control)
-      .filter((c) => c?.param === "O_ucd")
-      .map((c) => c!.value),
-  );
-  if (ucdValues.size > 1) {
+  const bySection = new Map<string, Map<string, string[]>>();
+  for (const key of usedKeys) {
+    const control = VARIABLE_BY_KEY[key]?.control;
+    if (!control) continue;
+    let byValue = bySection.get(control.param);
+    if (!byValue) {
+      byValue = new Map();
+      bySection.set(control.param, byValue);
+    }
+    byValue.set(control.value, [
+      ...(byValue.get(control.value) ?? []),
+      VARIABLE_BY_KEY[key]?.label ?? key,
+    ]);
+  }
+
+  if ((bySection.get("O_ucd")?.size ?? 0) > 1) {
     return (
       "Only one cause-of-death framework can be used per query: choose ICD-10 codes, " +
       "injury intent/mechanism, OR leading causes — not a mix. Run separate queries instead."
     );
+  }
+  const SECTION_LABEL: Record<string, string> = {
+    O_age: "age variable",
+    O_race: "race variable",
+  };
+  for (const [param, byValue] of bySection) {
+    if (param === "O_ucd" || byValue.size <= 1) continue;
+    const names = [...byValue.values()].flat().join(", ");
+    return `Only one ${SECTION_LABEL[param] ?? param} can be used per query, whether grouping or filtering. Remove one of: ${names}.`;
   }
   return null;
 }

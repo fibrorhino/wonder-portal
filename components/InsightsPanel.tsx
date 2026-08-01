@@ -20,15 +20,15 @@ export default function InsightsPanel({
 }) {
   const basePoints = useMemo(() => talkingPoints(table), [table]);
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiPoints, setAiPoints] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // A new result invalidates any previous AI rewrite.
-  useEffect(() => {
-    setAiPoints(null);
-    setError(null);
-  }, [table]);
+  // An AI rewrite (or an error from one) belongs to the specific table it was
+  // produced from. Tagging it with that table lets a new result invalidate it
+  // during render, instead of via an effect that fires a second render pass.
+  const [ai, setAi] = useState<{ table: ResultTable; points: string[] } | null>(null);
+  const [errorState, setErrorState] = useState<{ table: ResultTable; message: string } | null>(null);
+  const aiPoints = ai?.table === table ? ai.points : null;
+  const error = errorState?.table === table ? errorState.message : null;
+  const setError = (message: string) => setErrorState({ table, message });
 
   useEffect(() => {
     fetch("/api/insights")
@@ -39,7 +39,7 @@ export default function InsightsPanel({
 
   const enhance = async () => {
     setLoading(true);
-    setError(null);
+    setErrorState(null);
     try {
       const context = spec
         ? `${describeGrouping(spec)} — ${describeFilters(spec)}`
@@ -58,7 +58,8 @@ export default function InsightsPanel({
         setError(parsed.data.error ?? "Could not enhance the talking points.");
         return;
       }
-      setAiPoints(parsed.data.points ?? null);
+      const points = parsed.data.points ?? null;
+      setAi(points ? { table, points } : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error.");
     } finally {
@@ -83,7 +84,7 @@ export default function InsightsPanel({
           {aiPoints && (
             <button
               type="button"
-              onClick={() => setAiPoints(null)}
+              onClick={() => setAi(null)}
               className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white"
             >
               Revert

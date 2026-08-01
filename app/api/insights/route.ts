@@ -45,6 +45,16 @@ export async function POST(req: NextRequest) {
   if (points.length === 0) {
     return NextResponse.json({ ok: false, error: "No talking points to enhance." }, { status: 400 });
   }
+  // The site is public and this endpoint spends the deployment's Gemini quota.
+  // lib/insights.ts emits at most 6 short bullets, so anything past these
+  // bounds is not a real request from the app.
+  const totalChars = points.reduce((n, p) => n + p.length, 0) + context.length;
+  if (points.length > 12 || totalChars > 6000) {
+    return NextResponse.json(
+      { ok: false, error: "Too much text to enhance." },
+      { status: 413 },
+    );
+  }
 
   const prompt = `You are helping a public health researcher present CDC mortality data.
 

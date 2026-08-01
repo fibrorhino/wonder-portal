@@ -24,7 +24,10 @@ export function computeRegression(pairs: [number, number][]): RegressionResult |
 
   const mb = linearRegression(clean);
   const line = linearRegressionLine(mb);
-  const r2 = rSquared(clean, line);
+  // rSquared is 0/0 = NaN when y is constant (no variance to explain); report
+  // 0 rather than letting "NaN" reach the UI.
+  const rawR2 = rSquared(clean, line);
+  const r2 = Number.isFinite(rawR2) ? rawR2 : 0;
 
   let pValue: number | null = null;
   let se: number | null = null;
@@ -39,8 +42,13 @@ export function computeRegression(pairs: [number, number][]): RegressionResult |
       if (se > 0) {
         const t = mb.m / se;
         pValue = studentTwoSidedP(t, n - 2);
+      } else if (mb.m === 0) {
+        // Zero residuals AND zero slope: the series is flat. There is no trend
+        // to be significant about, so p = 1. (Reporting 0 here claimed "the
+        // linear trend is statistically significant" for a perfectly flat line.)
+        pValue = 1;
       } else {
-        pValue = 0; // perfect fit
+        pValue = 0; // zero residuals with a non-zero slope: an exact fit
       }
     }
   }
