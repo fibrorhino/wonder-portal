@@ -1,0 +1,30 @@
+# Keep the build context small and — importantly — keep secrets and local
+# state out of the image. `COPY . .` in the Dockerfile would otherwise bake in
+# .env.local (the Gemini API key) and the tunnel credentials under tools/.
+.env
+.env.*
+!.env.example
+
+node_modules
+.next
+.test-out
+out
+build
+
+.git
+.gitignore
+.github
+
+# Local Windows hosting artefacts: downloaded binaries, tunnel credentials, logs
+tools/*.exe
+tools/config.yml
+tools/*.json
+tools/*.pem
+logs
+
+*.md
+!README.md
+
+.vercel
+*.tsbuildinfo
+.DS_Store
