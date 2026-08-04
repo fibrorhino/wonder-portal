@@ -14,6 +14,7 @@ import {
   recordCdcFailure,
   recordCdcSuccess,
 } from "@/lib/wonderHealth";
+import { logQuery } from "@/lib/queryLog";
 
 const WONDER_URL = `https://wonder.cdc.gov/controller/datarequest/${DATABASE_ID}`;
 
@@ -78,7 +79,8 @@ function validate(spec: QuerySpec): string | null {
   };
   for (const [param, byValue] of bySection) {
     if (param === "O_ucd" || byValue.size <= 1) continue;
-    const names = [...byValue.values()].flat().join(", ");
+    // A variable used for BOTH grouping and filtering is collected twice.
+    const names = [...new Set([...byValue.values()].flat())].join(", ");
     return `Only one ${SECTION_LABEL[param] ?? param} can be used per query, whether grouping or filtering. Remove one of: ${names}.`;
   }
   return null;
@@ -106,6 +108,7 @@ function throttled<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   let spec: QuerySpec;
   try {
     spec = (await req.json()) as QuerySpec;
@@ -119,8 +122,21 @@ export async function POST(req: NextRequest) {
   spec.filters = spec.filters ?? {};
   spec.options = spec.options ?? {};
 
+  // Usage log — one line per query. Fire-and-forget; never blocks or throws.
+  const log = (ok: boolean, extra: { cached?: boolean; error?: string } = {}) =>
+    logQuery(req.headers, {
+      kind: "query",
+      ok,
+      ms: Date.now() - startedAt,
+      groupBy: spec.groupBy,
+      measures: spec.measures,
+      filters: spec.filters,
+      ...extra,
+    });
+
   const invalid = validate(spec);
   if (invalid) {
+    log(false, { error: invalid });
     return NextResponse.json(
       { ok: false, error: invalid, spec } satisfies WonderResponse,
       { status: 400 },
@@ -131,6 +147,7 @@ export async function POST(req: NextRequest) {
   const cached = cacheGet<WonderResponse>(key);
   if (cached) {
     recordCacheHit();
+    log(true, { cached: true });
     return NextResponse.json(cached);
   }
 
@@ -176,6 +193,7 @@ export async function POST(req: NextRequest) {
           ? " CDC's edge is refusing requests from this server right now. This usually clears on its own; if it persists, restarting the app (which opens fresh connections) typically resolves it."
           : "";
       recordCdcFailure(`HTTP ${res.status}: ${detail}`);
+      log(false, { error: `CDC HTTP ${res.status}` });
       return NextResponse.json(
         {
           ok: false,
@@ -188,6 +206,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     recordCdcFailure(`unreachable: ${msg}`);
+    log(false, { error: `unreachable: ${msg}` });
     return NextResponse.json(
       {
         ok: false,
@@ -204,6 +223,7 @@ export async function POST(req: NextRequest) {
     // query, not an outage. Recorded as a success for health purposes so a
     // malformed query cannot make the site look down.
     recordCdcSuccess();
+    log(false, { error: `WONDER rejected: ${wonderError}` });
     return NextResponse.json(
       { ok: false, error: `CDC WONDER: ${wonderError}`, spec } satisfies WonderResponse,
       { status: 502 },
@@ -215,5 +235,6 @@ export async function POST(req: NextRequest) {
   const table = parseResponse(xml, spec);
   const payload: WonderResponse = { ok: true, table, spec };
   cacheSet(key, payload);
+  log(true, { cached: false });
   return NextResponse.json(payload);
 }

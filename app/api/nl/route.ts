@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { MeasureKey, QuerySpec } from "@/lib/wonder/types";
 import { DATABASE_ID, VARIABLE_BY_KEY } from "@/lib/wonder/databases";
 import { buildSchemaContext } from "@/lib/wonder/schemaContext";
+import { logQuery } from "@/lib/queryLog";
 
 export const runtime = "nodejs";
 
@@ -198,6 +199,7 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
 }
 
 export async function POST(req: NextRequest) {
+  const startedAt = Date.now();
   const maybeKey = apiKey();
   if (!maybeKey) {
     return NextResponse.json(
@@ -277,8 +279,25 @@ export async function POST(req: NextRequest) {
 
   const result = validateAndBuildSpec(llmOut);
   if ("error" in result) {
+    logQuery(req.headers, {
+      kind: "nl",
+      ok: false,
+      ms: Date.now() - startedAt,
+      text,
+      error: result.error,
+    });
     return NextResponse.json({ ok: false, error: result.error }, { status: 422 });
   }
+
+  logQuery(req.headers, {
+    kind: "nl",
+    ok: true,
+    ms: Date.now() - startedAt,
+    text,
+    groupBy: result.spec.groupBy,
+    measures: result.spec.measures,
+    filters: result.spec.filters,
+  });
 
   return NextResponse.json({
     ok: true,

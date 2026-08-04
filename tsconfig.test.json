@@ -12,5 +12,5 @@
     "outDir": ".test-out",
     "types": ["node"]
   },
-  "include": ["lib/stats/**/*.ts", "lib/wonder/**/*.ts", "lib/wonderHealth.ts", "lib/wonderHealth.test.ts"]
+  "include": ["lib/stats/**/*.ts", "lib/wonder/**/*.ts", "lib/wonderHealth.ts", "lib/wonderHealth.test.ts", "lib/queryLog.ts", "lib/queryLog.test.ts"]
 }

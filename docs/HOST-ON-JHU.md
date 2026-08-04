@@ -159,6 +159,47 @@ type C:\dev\wonderwall\logs\healthcheck.log
 
 To remove it: `schtasks /delete /tn WonderPortalHealthcheck /f`
 
+---
+
+## Usage tracking
+
+Every query is appended as one JSON line to `logs\queries.jsonl` — what was
+asked, by whom, from where. Client details come from headers Cloudflare sets on
+the way through the tunnel (`CF-Connecting-IP`, `CF-IPCountry`), so they are the
+real visitor rather than the `127.0.0.1` the socket would otherwise show.
+
+Each line records: timestamp, IP, country, browser, OS, device class, language,
+referrer, the full query (group-by, measures, filters), whether it succeeded,
+how long it took, and whether it was served from cache. Prompts typed into the
+natural-language box are logged too, so you can see what people actually ask
+for.
+
+Read it with:
+
+```
+node tools\query-report.mjs                REM last 30 days
+node tools\query-report.mjs --days 7
+node tools\query-report.mjs --days 0       REM everything
+node tools\query-report.mjs --ips          REM include per-IP breakdown
+```
+
+It reports activity by day, countries, devices, browsers, referrers, the most
+popular groupings and cause-of-death selections, cache hit rate, error
+breakdown, and recent natural-language prompts. Monitors and scripts are
+classified as `bot` so the uptime checks do not inflate the figures.
+
+The log rotates at 5 MB, keeping three older files. `logs\` is gitignored, so
+none of this leaves the machine.
+
+**Privacy.** IP addresses are personal data in most jurisdictions. The site is
+public, so consider a one-line note in the footer saying that usage is logged.
+To stop storing addresses, change `anonymiseIp` in `lib/queryLog.ts` to hash or
+truncate them — nothing else needs to change.
+
+For visitor analytics proper (page views, referrers, countries — without
+touching the app), Cloudflare Web Analytics is free, cookieless, and needs only
+a beacon snippet in `app/layout.tsx`.
+
 ### What is still unguarded
 
 - **A real power cut.** The machine will not power itself back on. The BIOS
