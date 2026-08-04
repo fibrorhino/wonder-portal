@@ -13,12 +13,12 @@ done with the manual query builder.
 
 ---
 
-## Quick start (local) — this is the way to use it for live data
+## Quick start (local, for development)
 
-> **CDC blocks the Vercel-hosted site's data queries** (it 403s requests from
-> cloud/data-center IPs — confirmed on this deployment). The deployed site loads
-> fine but can't fetch data. **Run it locally** and queries go from *your* IP,
-> which works.
+> The live site is at **https://wonderwall.nestadt.org** — see
+> [how it's hosted](#how-wonderwallnestadtorg-is-hosted) below. Run it locally to
+> develop, or to use it from a machine whose IP CDC accepts (home or university).
+> **Cloud hosts don't work**: CDC 403s requests from data-center IPs.
 
 **Easiest:** double-click **`run-locally.bat`** (Windows). It installs deps the
 first time, starts the server, and opens the browser.
@@ -45,40 +45,31 @@ CDC sometimes blocks requests coming from data-center / cloud IP ranges
 server-side route, the app behaves differently depending on where that server
 runs:
 
-| Where you run it | Requests originate from | CDC blocking risk |
+| Where you run it | Requests originate from | Result |
 | --- | --- | --- |
-| `npm run dev` / `npm start` on your computer | your home / university IP | very low |
-| Deployed to Vercel | Vercel's cloud IP | possible |
+| `npm run dev` / `npm start` on your computer | your home / university IP | works |
+| An always-on desktop on the university network | university IP | works — **this is the live site** |
+| Deployed to Vercel / Azure / any cloud host | data-center IP | **403, no data** |
 
-**The same codebase works both ways with zero changes.** Deploy to Vercel; if
-CDC starts blocking it, just run it locally instead. If a query is blocked
-server-side you'll get a clear error message suggesting local mode.
+Cloud hosting was tried and confirmed blocked. The same codebase works in every
+case with zero changes — only the *machine it runs on* matters, because the
+WONDER call happens in a server-side route.
 
 ---
 
-## Deploy to `wonderwall.nestadt.org` (Vercel + Cloudflare)
+## How `wonderwall.nestadt.org` is hosted
 
-1. **Push to GitHub.** Create a repo and push this folder.
-2. **Import into Vercel.** https://vercel.com/new → pick the repo → *Deploy*
-   (Vercel auto-detects Next.js; no config needed).
-3. **Add the custom domain.** In the Vercel project: *Settings → Domains* → add
-   `wonderwall.nestadt.org`. Vercel shows a target value (usually
-   `cname.vercel-dns.com`).
-4. **Point Cloudflare at it.** In Cloudflare DNS for `nestadt.org`, add a
-   `CNAME` record:
-   - **Name:** `wonderwall`
-   - **Target:** `cname.vercel-dns.com` (use the exact value Vercel gave you)
-   - **Proxy status:** set to **DNS only** (grey cloud) at first. Cloudflare's
-     orange-cloud proxy is another cloud IP in front of CDC — starting with DNS
-     only keeps the request path closest to Vercel and simplifies debugging.
-5. Wait for DNS + Vercel's TLS cert, then visit https://wonderwall.nestadt.org.
+The live site runs on an always-on desktop on the university network, published
+through a **Cloudflare Tunnel** (no inbound ports, free TLS). The tunnel handles
+inbound traffic only; the CDC request goes out from that machine directly, which
+is why the site can be public while CDC still sees an allowed IP.
 
-If the deployed site can query WONDER, you're done. If it gets blocked, fall
-back to running locally (above).
+**Full setup, deployment, watchdog and troubleshooting: [`docs/HOST-ON-JHU.md`](docs/HOST-ON-JHU.md).**
 
 > Note: the 15-second CDC rate-limit spacing and the response cache are held in
-> per-instance memory. That's fine for personal / low-traffic use. For heavier
-> shared use, move them to a shared store (e.g. Vercel KV).
+> per-process memory, which is correct for the single always-on server used
+> here. Running more than one instance would break the CDC pacing — see the
+> comment in `app/api/wonder/route.ts`.
 
 ---
 

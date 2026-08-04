@@ -1,132 +1,169 @@
-# Hosting WONDER Portal on an always-on JHU machine (live data + public domain)
+# Running Wonderwall on the always-on desktop
 
-**Why:** CDC WONDER blocks cloud/data-center IPs (Vercel, AWS, …), so the hosted
-Vercel site can't fetch data. A machine on the **JHU network has an allowed IP**.
-Running the app there and exposing it through a **Cloudflare Tunnel** gives you
-`wonderwall.nestadt.org` serving **live data**, with no open ports.
+**This describes the live setup**, not a plan. The site has been serving from
+this machine since 2026-07-08.
+
+**Why this machine:** CDC WONDER refuses API requests from cloud/data-center IPs
+(Vercel, Azure, AWS — confirmed). A desktop on the university network has an
+allowed IP. A Cloudflare Tunnel publishes it to the internet with no inbound
+ports open.
 
 ```
-visitor → wonderwall.nestadt.org → Cloudflare → Tunnel → JHU machine :3000 → CDC WONDER
-                                                                (allowed IP ✓)
+visitor → wonderwall.nestadt.org → Cloudflare ──┐
+                                                 │  tunnel opened OUTBOUND
+                                                 ▼  by this machine
+                                        desktop :3000
+                                                 │
+                                                 ▼  separate, direct → allowed IP ✓
+                                          wonder.cdc.gov
 ```
 
-Do this once on the always-on machine (a JHU desktop left powered on, or a VM
-from JHU IT). Assumes Windows; Linux notes at the bottom.
+The tunnel carries traffic **in**. It has nothing to do with the CDC request,
+which goes **out** from this machine directly. That separation is the whole
+reason the site can be public while CDC still sees a university address.
 
 ---
 
-## Step 0 — Confirm this machine's IP isn't blocked (2 min, do this FIRST)
+## Where everything lives
 
-No point building the tunnel if CDC blocks this machine too.
+| | |
+| --- | --- |
+| App folder | `C:\dev\wonderwall` — **the only copy to edit** |
+| Logs | `C:\dev\wonderwall\logs` |
+| Tunnel binaries, config, credentials | `C:\dev\wonderwall\tools` |
+| Gemini API key (optional feature) | `C:\dev\wonderwall\.env.local` |
+| Public URL | https://wonderwall.nestadt.org |
 
-```bash
-git clone https://github.com/fibrorhino/wonder-portal.git
-cd wonder-portal
+**Not in git, exists only on this machine:** everything in `tools\` (the `.exe`
+files, `config.yml`, and the tunnel credentials `.json`) plus `.env.local`. The
+tunnel credentials are the irreplaceable part — lose them and you must create a
+new tunnel and re-point DNS. Keep a copy somewhere else.
+
+## The two services
+
+Both are **Windows services** wrapped with [WinSW](https://github.com/winsw/winsw),
+set to `Automatic`, so they start at boot with nobody logged in. That is why the
+site comes back on its own after the weekly patch reboot. Both are also set to
+restart themselves 10 seconds after a crash.
+
+| Service | What it runs |
+| --- | --- |
+| `WonderPortal` | `node next start -p 3000` in `C:\dev\wonderwall` |
+| `WonderTunnel` | `cloudflared … tunnel run wonder-portal` |
+
+Definitions live in `tools\wonder-portal-svc.xml` and `tools\wonder-tunnel-svc.xml`.
+They were installed by `tools\install-services.bat` (Run as administrator).
+
+Check them at any time:
+
+```
+sc query WonderPortal
+sc query WonderTunnel
+```
+
+Both should say `RUNNING`.
+
+---
+
+## Deploying a code change
+
+```
+cd /d C:\dev\wonderwall
+git status            REM must be clean before you start
+git pull
 npm install
-npm run dev
+npm run build
 ```
-Open http://localhost:3000, run any query. **If data comes back, this machine's
-IP works** — continue. If you get a 403, this machine is also blocked (unlikely
-on campus, but if so, try a different JHU host).
 
-Stop the dev server (Ctrl-C) once confirmed.
+Then, in an **Administrator** Command Prompt:
+
+```
+net stop WonderPortal && net start WonderPortal
+```
+
+Only the app service needs restarting — leave `WonderTunnel` alone. Wait ~30
+seconds, then load the site and run a real query.
+
+A restart also opens fresh connections to CDC, which is the cure for the
+keep-alive 403 problem (see the comment in `app/api/wonder/route.ts`).
+
+### Rolling back
+
+Find the commit you want (`git log --oneline`), then:
+
+```
+cd /d C:\dev\wonderwall
+git reset --hard <commit>
+npm run build
+```
+followed by the same `net stop` / `net start` as Administrator.
+
+### `cd` gotcha
+
+In Command Prompt, `cd` does **not** switch drives. From `H:\`, typing
+`cd C:\dev\wonderwall` leaves you on `H:` and every git command then reports
+"not a git repository". Always use `cd /d`, and check the prompt.
 
 ---
 
-## Step 1 — Run the app as a boot-level Windows service (survives unattended reboot)
+## Keeping it up
 
-The machine reboots unattended (e.g. weekly patch reboot) with **no one logged
-in**, so the app must run as a real **Windows service** that starts at *boot*,
-not a "startup" item that waits for login. We use **NSSM** (Non-Sucking Service
-Manager) to wrap the Next.js production server as a service.
+The failure mode here is *silent*: if the app won't start, WinSW retries every
+10 seconds forever and nothing tells you. Two guards:
 
-1. Build the production server:
-   ```bash
-   npm run build
-   ```
-2. Download NSSM from https://nssm.cc/download (unzip; use `win64\nssm.exe`).
-3. In an **Administrator** terminal, install the service (adjust paths):
-   ```bat
-   nssm install WonderPortal "C:\Program Files\nodejs\node.exe" "node_modules\next\dist\bin\next start -p 3000"
-   nssm set WonderPortal AppDirectory "C:\dev\wonderwall"
-   nssm set WonderPortal Start SERVICE_AUTO_START
-   nssm set WonderPortal AppStdout "C:\dev\wonderwall\logs\app.log"
-   nssm set WonderPortal AppStderr "C:\dev\wonderwall\logs\app.err.log"
-   nssm start WonderPortal
-   ```
-The app now serves http://localhost:3000 and **auto-starts on every boot**,
-before any login. Manage it with `nssm restart WonderPortal` /
-`nssm stop WonderPortal`, or Windows "Services".
+**1. External monitoring.** A free UptimeRobot monitor on
+`https://wonderwall.nestadt.org` (5-minute interval) emails you when the site
+goes down and again when it recovers. This is the one that tells you a reboot
+went badly.
 
-To update after code changes: `git pull && npm run build`, then
-`nssm restart WonderPortal`.
+**2. Local watchdog.** `tools\healthcheck.ps1` checks the app on
+`localhost:3000`, restarts `WonderPortal` if it is unresponsive, and starts
+`WonderTunnel` if it has stopped. Install it as a scheduled task that runs every
+10 minutes:
+
+```
+Right-click tools\install-healthcheck.bat → Run as administrator
+```
+
+It appends to `logs\healthcheck.log`. To see what it has been doing:
+
+```
+type C:\dev\wonderwall\logs\healthcheck.log
+```
+
+To remove it: `schtasks /delete /tn WonderPortalHealthcheck /f`
+
+### What is still unguarded
+
+- **A real power cut.** The machine will not power itself back on. The BIOS
+  setting for this ("restore on AC power loss") is locked on a managed desktop.
+  A software reboot is fine — the machine restarts on its own and the services
+  follow.
+- **Someone physically shutting the desktop down.** Label it.
 
 ---
 
-## Step 2 — Install Cloudflare Tunnel
+## Troubleshooting
 
-Download `cloudflared` for Windows:
-https://github.com/cloudflare/cloudflared/releases (the `cloudflared-windows-amd64.exe`
-— rename it to `cloudflared.exe` and put it somewhere on PATH, e.g. `C:\cloudflared\`).
+**Site is down.** Check `sc query WonderPortal` and `sc query WonderTunnel`
+first. If `WonderPortal` is stopped or cycling, look at `logs\app.err.log`. The
+usual cause is a failed build — run `npm run build` by hand and read the error.
 
-```bash
-cloudflared tunnel login          # opens a browser: pick the nestadt.org zone
-cloudflared tunnel create wonder-portal
-```
-`create` prints a **Tunnel ID** and writes a credentials JSON. Note the ID.
+**Site loads but queries fail with a 403.** CDC is refusing this machine's
+requests. Restarting `WonderPortal` opens fresh connections and normally clears
+it. If it persists across a restart, the IP itself may be blocked — test with
+`npm run dev` and a single query.
 
-Create a config file at `C:\Users\<you>\.cloudflared\config.yml`:
-```yaml
-tunnel: <TUNNEL_ID>
-credentials-file: C:\Users\<you>\.cloudflared\<TUNNEL_ID>.json
-
-ingress:
-  - hostname: wonderwall.nestadt.org
-    service: http://localhost:3000
-  - service: http_status:404
-```
-
-Point the domain at the tunnel (auto-creates the Cloudflare DNS record):
-```bash
-cloudflared tunnel route dns wonder-portal wonderwall.nestadt.org
-```
-
-Run the tunnel as a Windows service so it's always up:
-```bash
-cloudflared service install
-```
+**Tunnel service running but the domain doesn't resolve.** Confirm the DNS
+record for `wonderwall` in Cloudflare still points at
+`<TUNNEL_ID>.cfargotunnel.com`.
 
 ---
 
-## Step 3 — Switch the domain from Vercel to the tunnel
+## Rebuilding from scratch
 
-In **Cloudflare → DNS**, you'll now see a new CNAME for `wonderwall` pointing to
-`<TUNNEL_ID>.cfargotunnel.com` (created by Step 2). **Delete the old record** that
-pointed to Vercel (`cname.vercel-dns.com` or the `76.76.21.21` A record) so only
-the tunnel record remains. Keep it **DNS only** (grey cloud).
-
-In **Vercel**, you can leave the project as-is (a backup/demo) or remove the
-`wonderwall.nestadt.org` domain from it to avoid confusion.
-
----
-
-## Done
-
-`https://wonderwall.nestadt.org` now serves the app from the JHU machine and
-**returns live CDC data**. It stays up as long as the machine is powered on
-(PM2 + the cloudflared service both auto-start on boot).
-
-### If the machine reboots
-Both services are set to auto-start, so it recovers on its own. Verify with
-`pm2 status` and `cloudflared tunnel info wonder-portal`.
-
-### Linux VM instead of Windows
-- App: same, but use `pm2 startup systemd` instead of `pm2-windows-startup`.
-- Tunnel: `cloudflared` has a native package; `sudo cloudflared service install`
-  runs it via systemd. Everything else is identical.
-
-### Security note
-The app has no login. Anyone with the URL can run queries (all data is public
-CDC aggregate data, so this is fine). If you ever want to restrict it, put
-**Cloudflare Access** in front of the hostname — a few clicks in the Cloudflare
-Zero Trust dashboard, no code changes.
+If this machine is ever lost: clone the repo, `npm install`, restore `tools\`
+and `.env.local` from backup, `npm run build`, then run
+`tools\install-services.bat` as administrator. Without the backed-up `tools\`
+folder you also need to re-run `cloudflared tunnel login`, create a tunnel, and
+re-point the DNS record.
