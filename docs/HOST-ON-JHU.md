@@ -111,10 +111,36 @@ In Command Prompt, `cd` does **not** switch drives. From `H:\`, typing
 The failure mode here is *silent*: if the app won't start, WinSW retries every
 10 seconds forever and nothing tells you. Two guards:
 
-**1. External monitoring.** A free UptimeRobot monitor on
-`https://wonderwall.nestadt.org` (5-minute interval) emails you when the site
-goes down and again when it recovers. This is the one that tells you a reboot
-went badly.
+**1. External monitoring — two monitors, watching different things.**
+
+*Is the site up?* A free UptimeRobot **keyword** monitor on
+`https://wonderwall.nestadt.org`, alerting when the keyword `WONDER Portal` is
+absent. Keyword rather than plain HTTP because Cloudflare will answer even when
+this machine is gone; that string comes from the app's own header, so it only
+appears if the app really rendered. This is the one that tells you a reboot went
+badly. (If you change the header text, update the monitor.)
+
+*Do queries still work?* The home page renders fine while every CDC query 403s,
+so a page check cannot see that. Point a second monitor at
+`https://wonderwall.nestadt.org/api/health` — keyword `"cdc":"ok"`, or a plain
+HTTP monitor, since the endpoint returns **503** when queries are failing.
+
+`/api/health` reports the app's own view of CDC, based on queries real users
+already ran — it never calls CDC itself (see `lib/wonderHealth.ts`; a monitor
+firing its own WONDER query every few minutes is how an IP gets blocked). It
+reports `failing` only after **two consecutive** failures, so one transient 403
+— which the route already retries — does not page you. A quiet period with no
+queries reports `ok`, not `unknown`, so an idle night never alerts.
+
+```json
+{ "ok": true, "cdc": "ok", "detail": "last query succeeded",
+  "lastSuccess": "2026-08-05T14:22:10.000Z", "consecutiveFailures": 0,
+  "queries": { "cdcCalls": 42, "failed": 1, "cacheHits": 17 },
+  "uptimeSeconds": 86400 }
+```
+
+Counters are per-process and reset when `WonderPortal` restarts, the same as
+the response cache.
 
 **2. Local watchdog.** `tools\healthcheck.ps1` checks the app on
 `localhost:3000`, restarts `WonderPortal` if it is unresponsive, and starts

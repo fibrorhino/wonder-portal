@@ -9,6 +9,11 @@ import { DATABASE_ID, VARIABLE_BY_KEY } from "@/lib/wonder/databases";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
 import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
+import {
+  recordCacheHit,
+  recordCdcFailure,
+  recordCdcSuccess,
+} from "@/lib/wonderHealth";
 
 const WONDER_URL = `https://wonder.cdc.gov/controller/datarequest/${DATABASE_ID}`;
 
@@ -124,7 +129,10 @@ export async function POST(req: NextRequest) {
 
   const key = cacheKey(spec);
   const cached = cacheGet<WonderResponse>(key);
-  if (cached) return NextResponse.json(cached);
+  if (cached) {
+    recordCacheHit();
+    return NextResponse.json(cached);
+  }
 
   const xmlRequest = buildRequestXml(spec);
   let xml: string;
@@ -167,6 +175,7 @@ export async function POST(req: NextRequest) {
         res.status === 403
           ? " CDC's edge is refusing requests from this server right now. This usually clears on its own; if it persists, restarting the app (which opens fresh connections) typically resolves it."
           : "";
+      recordCdcFailure(`HTTP ${res.status}: ${detail}`);
       return NextResponse.json(
         {
           ok: false,
@@ -178,6 +187,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    recordCdcFailure(`unreachable: ${msg}`);
     return NextResponse.json(
       {
         ok: false,
@@ -190,11 +200,17 @@ export async function POST(req: NextRequest) {
 
   const wonderError = extractError(xml);
   if (wonderError) {
+    // WONDER answered, so the connection and IP are fine — this is a rejected
+    // query, not an outage. Recorded as a success for health purposes so a
+    // malformed query cannot make the site look down.
+    recordCdcSuccess();
     return NextResponse.json(
       { ok: false, error: `CDC WONDER: ${wonderError}`, spec } satisfies WonderResponse,
       { status: 502 },
     );
   }
+
+  recordCdcSuccess();
 
   const table = parseResponse(xml, spec);
   const payload: WonderResponse = { ok: true, table, spec };
