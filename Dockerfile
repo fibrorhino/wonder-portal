@@ -15,6 +15,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+# Switches next.config.ts to output: "standalone" for this build only, so the
+# default config keeps working with `next start` on the always-on host.
+ENV BUILD_STANDALONE=1
 RUN npm run build
 
 FROM node:22-slim AS runtime

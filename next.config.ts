@@ -1,10 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Emit .next/standalone with a self-contained server.js, so the Docker image
-  // does not need node_modules. Used by the container deployment (Dockerfile);
-  // `npm run dev` and `npm start` are unaffected.
-  output: "standalone",
+  // Standalone output (a self-contained .next/standalone/server.js that needs
+  // no node_modules) is ONLY for the container build — the Dockerfile sets
+  // BUILD_STANDALONE=1. It must not be on by default: Next refuses to support
+  // `next start` alongside it ("next start does not work with output:
+  // standalone"), and the Windows service on the always-on host runs exactly
+  // that command.
+  ...(process.env.BUILD_STANDALONE === "1" ? { output: "standalone" as const } : {}),
 };
 
 export default nextConfig;
