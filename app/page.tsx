@@ -217,6 +217,28 @@ export default function Home() {
             are flagged unreliable, per CDC policy. This tool is not affiliated with
             the CDC.
           </p>
+          {/* Footnote for the asterisks on the "Run query" and "Ask" buttons.
+              Running a query accepts CDC's data use restrictions on the
+              visitor's behalf, so the terms they are bound by are stated here
+              rather than left implicit. */}
+          <p className="mt-2">
+            * Running a query submits it to CDC WONDER under CDC&apos;s data use
+            restrictions, which are accepted on your behalf. These data are
+            provided for statistical reporting and analysis only. You must make
+            no attempt to learn the identity of any person or establishment
+            included in the data, and must not link them with other data for
+            that purpose; any identity discovered inadvertently must be reported
+            to the Director, NCHS. Full terms:{" "}
+            <a
+              href="https://wonder.cdc.gov/datause.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-slate-700"
+            >
+              CDC WONDER Data Use Restrictions
+            </a>
+            .
+          </p>
         </div>
       </footer>
     </div>

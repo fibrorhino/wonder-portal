@@ -377,7 +377,15 @@ export default function QueryBuilder({
         disabled={loading || spec.groupBy.length === 0}
         className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
       >
-        {loading ? "Querying CDC WONDER…" : "Run query"}
+        {loading ? (
+          "Querying CDC WONDER…"
+        ) : (
+          <>
+            Run query
+            {/* Footnote marker — terms are set out at the foot of the page. */}
+            <span className="ml-0.5 align-super text-[0.6rem]">*</span>
+          </>
+        )}
       </button>
     </div>
   );
