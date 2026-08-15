@@ -8,6 +8,7 @@ import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
 import { DATABASE_ID, VARIABLE_BY_KEY } from "@/lib/wonder/databases";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
 import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
+import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "@/lib/wonder/cdcErrors";
 import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
 import {
   recordCacheHit,
@@ -187,17 +188,15 @@ export async function POST(req: NextRequest) {
 
     xml = await res.text();
     if (!res.ok) {
-      const detail = extractError(xml) ?? `HTTP ${res.status}`;
-      const blocked =
-        res.status === 403
-          ? " CDC's edge is refusing requests from this server right now. This usually clears on its own; if it persists, restarting the app (which opens fresh connections) typically resolves it."
-          : "";
-      recordCdcFailure(`HTTP ${res.status}: ${detail}`);
+      // The raw status and CDC's own text go to health + the usage log; the
+      // visitor gets wording that makes clear this is CDC's side, not ours.
+      const detail = extractError(xml);
+      recordCdcFailure(`HTTP ${res.status}: ${detail ?? "(no detail)"}`);
       log(false, { error: `CDC HTTP ${res.status}` });
       return NextResponse.json(
         {
           ok: false,
-          error: `CDC WONDER rejected the query: ${detail}.${blocked}`,
+          error: cdcHttpErrorMessage(res.status, detail),
           spec,
         } satisfies WonderResponse,
         { status: 502 },
@@ -210,7 +209,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         ok: false,
-        error: `Could not reach CDC WONDER: ${msg}`,
+        error: cdcNetworkErrorMessage(e),
         spec,
       } satisfies WonderResponse,
       { status: 502 },
