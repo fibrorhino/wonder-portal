@@ -76,8 +76,17 @@ export default function QueryBuilder({
   const applyIcdCodes = (codes: string[], text: string) => {
     setIcdText(text);
     const next = { ...spec.filters };
-    for (const k of CAUSE_KEYS) delete next[k];
-    if (codes.length) next.ucdCause = codes;
+    if (codes.length) {
+      // ICD-10 codes are a different WONDER cause framework, so selecting them
+      // replaces any Manner of Death / mechanism / leading-cause selection.
+      for (const k of CAUSE_KEYS) delete next[k];
+      next.ucdCause = codes;
+    } else {
+      // Emptying the box just clears the ICD filter. It must NOT wipe the
+      // user's Manner of Death selection — typing a stray character and
+      // deleting it used to silently discard it with no way to undo.
+      delete next.ucdCause;
+    }
     setFilters(next);
   };
 

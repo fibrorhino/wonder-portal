@@ -66,13 +66,30 @@ export function talkingPoints(table: ResultTable): string[] {
   // Suppression
   const suppressed = rows.filter((r) => r[mi]?.flag === "suppressed").length;
 
-  // Total (only meaningful for counts, not rates)
+  // Total (only meaningful for counts, not rates).
+  //
+  // Suppressed cells parse to null and drop out of the sum, so a naive total
+  // understates the truth — and when EVERY cell is suppressed it reported
+  // "a total of 0 deaths" for data that is merely hidden. These bullets get
+  // exported onto slides, so the total is qualified whenever anything was
+  // suppressed, and omitted entirely when nothing is left to total.
   const values = rows.map((r) => cellNumber(r[mi])).filter((v): v is number => v !== null);
   const total = values.reduce((a, b) => a + b, 0);
   if (!isRate) {
-    points.push(
-      `This query returned ${fmt(rows.length)} group${rows.length === 1 ? "" : "s"}, encompassing a total of ${fmt(total)} ${mLabel}.`,
-    );
+    const groups = `${fmt(rows.length)} group${rows.length === 1 ? "" : "s"}`;
+    if (values.length === 0) {
+      points.push(
+        `This query returned ${groups}, but every ${mLabel} cell was suppressed by CDC, so no total can be shown.`,
+      );
+    } else if (suppressed > 0) {
+      points.push(
+        `This query returned ${groups}, encompassing at least ${fmt(total)} ${mLabel} — a partial total, because ${fmt(suppressed)} suppressed cell${suppressed === 1 ? "" : "s"} could not be counted.`,
+      );
+    } else {
+      points.push(
+        `This query returned ${groups}, encompassing a total of ${fmt(total)} ${mLabel}.`,
+      );
+    }
   }
 
   // Primary categorical dimension (first non-time dimension), else first dim
@@ -123,9 +140,15 @@ export function talkingPoints(table: ResultTable): string[] {
     }
   }
 
+  // The suppression caveat is a correctness note, not a nice-to-have, so it is
+  // appended after the slice rather than competing for one of the six slots —
+  // it was previously last in the list and so the first thing to be dropped.
+  const trimmed = points.slice(0, suppressed > 0 ? 5 : 6);
   if (suppressed > 0) {
-    points.push(`${suppressed} cell${suppressed === 1 ? " was" : "s were"} suppressed by CDC (counts of 1–9) to protect confidentiality and are excluded from these totals; interpret accordingly.`);
+    trimmed.push(
+      `${fmt(suppressed)} cell${suppressed === 1 ? " was" : "s were"} suppressed by CDC (counts of 1–9) to protect confidentiality and are excluded from these totals; interpret accordingly.`,
+    );
   }
 
-  return points.slice(0, 6);
+  return trimmed;
 }

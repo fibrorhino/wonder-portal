@@ -222,9 +222,13 @@ export default function ChartPanel({
       seriesMap.set(seriesName, bucket);
     }
 
-    // Optional sort (single-series categorical charts)
+    // Optional sort (single-series bar charts only). The toggle is offered for
+    // bar and pie types, but `sortDesc` survives a change of chart type and the
+    // toggle is then hidden — so without the isBarLike guard, switching a
+    // sorted bar chart to Line silently reorders the time axis by value, with
+    // no visible control to undo it.
     const seriesEntries = [...seriesMap.entries()];
-    if (sortDesc && seriesEntries.length === 1 && !useNumericX) {
+    if (sortDesc && isBarLike(chartType) && seriesEntries.length === 1 && !useNumericX) {
       const s = seriesEntries[0][1];
       const order = s.y.map((_, i) => i).sort((a, b) => s.y[b] - s.y[a]);
       s.x = order.map((i) => s.x[i]);

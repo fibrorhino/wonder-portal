@@ -135,8 +135,11 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
     warnings.push("Only one race grouping is allowed; kept the first.");
   }
 
+  // Deaths is always returned by WONDER and always shown, and the builder pins
+  // its checkbox on. Without this, an LLM answer of just ["crudeRate"] left the
+  // Deaths box unticked while the table displayed a Deaths column.
   const measures = (out.measures ?? []).filter(isMeasureKey);
-  if (measures.length === 0) measures.push("deaths");
+  if (!measures.includes("deaths")) measures.unshift("deaths");
 
   const filters: Record<string, string[]> = {};
   for (const [key, codes] of Object.entries(out.filters ?? {})) {
