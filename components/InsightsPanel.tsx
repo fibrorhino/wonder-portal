@@ -5,28 +5,33 @@
 // the optional "Enhance with AI" pass only rewrites them for tone and clarity
 // via /api/insights (Gemini), and can be reverted.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
-import { talkingPoints } from "@/lib/insights";
 import { describeFilters, describeGrouping } from "@/lib/describeSpec";
 import { safeJson } from "@/lib/safeJson";
 
 export default function InsightsPanel({
   table,
   spec,
+  basePoints,
+  aiPoints,
+  onAiPoints,
 }: {
   table: ResultTable;
   spec?: QuerySpec;
+  /** Deterministic bullets computed from the table by the page. */
+  basePoints: string[];
+  /** AI rewrite for THIS table, or null. Owned by the page so that the PPTX
+   *  export in the chart panel ships whatever the user is actually reading. */
+  aiPoints: string[] | null;
+  onAiPoints: (points: string[] | null) => void;
 }) {
-  const basePoints = useMemo(() => talkingPoints(table), [table]);
   const [aiEnabled, setAiEnabled] = useState(false);
   const [loading, setLoading] = useState(false);
-  // An AI rewrite (or an error from one) belongs to the specific table it was
-  // produced from. Tagging it with that table lets a new result invalidate it
-  // during render, instead of via an effect that fires a second render pass.
-  const [ai, setAi] = useState<{ table: ResultTable; points: string[] } | null>(null);
+  // An error from an enhance attempt belongs to the specific table it came
+  // from. Tagging it lets a new result invalidate it during render, instead of
+  // via an effect that fires a second render pass.
   const [errorState, setErrorState] = useState<{ table: ResultTable; message: string } | null>(null);
-  const aiPoints = ai?.table === table ? ai.points : null;
   const error = errorState?.table === table ? errorState.message : null;
   const setError = (message: string) => setErrorState({ table, message });
 
@@ -58,8 +63,7 @@ export default function InsightsPanel({
         setError(parsed.data.error ?? "Could not enhance the talking points.");
         return;
       }
-      const points = parsed.data.points ?? null;
-      setAi(points ? { table, points } : null);
+      onAiPoints(parsed.data.points ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error.");
     } finally {
@@ -84,7 +88,7 @@ export default function InsightsPanel({
           {aiPoints && (
             <button
               type="button"
-              onClick={() => setAi(null)}
+              onClick={() => onAiPoints(null)}
               className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white"
             >
               Revert

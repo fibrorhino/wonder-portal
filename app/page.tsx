@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
+import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
+import { talkingPoints } from "@/lib/insights";
 import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
 import { DATABASE_LABEL } from "@/lib/wonder/databases";
@@ -33,6 +34,11 @@ export default function Home() {
   const [nlWarnings, setNlWarnings] = useState<string[]>([]);
   const [suggestedChartType, setSuggestedChartType] = useState<string | undefined>(undefined);
   const [chartKey, setChartKey] = useState(0);
+  // The AI-polished talking points live here, not in InsightsPanel, so that the
+  // PPTX export in ChartPanel ships the same bullets the user is reading.
+  // Tagged with the table they were produced from, so a new result invalidates
+  // them during render rather than via an effect.
+  const [ai, setAi] = useState<{ table: ResultTable; points: string[] } | null>(null);
 
   const run = async (specToRun: QuerySpec = spec, landOnTab: Tab = "table") => {
     setLoading(true);
@@ -85,6 +91,12 @@ export default function Home() {
     () => (table ? table.columns.map((c) => c.key).join("|") : ""),
     [table],
   );
+
+  // Deterministic bullets, computed once and shared by the insights panel and
+  // the PPTX export.
+  const basePoints = useMemo(() => (table ? talkingPoints(table) : []), [table]);
+  const aiPoints = table && ai?.table === table ? ai.points : null;
+  const points = aiPoints ?? basePoints;
 
   return (
     <div className="flex min-h-full flex-col bg-[#e7f0fa]">
@@ -196,11 +208,18 @@ export default function Home() {
                     table={table}
                     initialChartType={suggestedChartType}
                     spec={result?.spec}
+                    talkingPoints={points}
                   />
                 )}
                 {tab === "stats" && <StatsPanel key={shapeKey} table={table} />}
 
-                <InsightsPanel table={table} spec={result?.spec} />
+                <InsightsPanel
+                  table={table}
+                  spec={result?.spec}
+                  basePoints={basePoints}
+                  aiPoints={aiPoints}
+                  onAiPoints={(next) => setAi(next ? { table, points: next } : null)}
+                />
               </>
             )}
           </div>

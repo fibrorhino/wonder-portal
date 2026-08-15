@@ -56,10 +56,14 @@ export default function ChartPanel({
   table,
   initialChartType,
   spec,
+  talkingPoints,
 }: {
   table: ResultTable;
   initialChartType?: string;
   spec?: QuerySpec;
+  /** The bullets currently shown below the tabs — AI-polished if the user
+   *  polished them — so the exported deck matches what they are reading. */
+  talkingPoints: string[];
 }) {
   const dims = dimensionCols(table);
   const measures = measureCols(table);
@@ -453,7 +457,7 @@ export default function ChartPanel({
             const png = await plotRef.current?.toImage().catch(() => null);
             await exportPptx(
               table,
-              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption },
+              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption, talkingPoints },
               png ?? null,
             );
           }}

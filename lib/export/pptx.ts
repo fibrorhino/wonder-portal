@@ -6,7 +6,6 @@
 
 import type { ResultTable } from "@/lib/wonder/types";
 import { cellLabel, cellNumber, dataRows } from "@/lib/tableUtils";
-import { talkingPoints } from "@/lib/insights";
 
 export interface PptxChartConfig {
   chartType: string;
@@ -17,6 +16,12 @@ export interface PptxChartConfig {
   measureLabel: string;
   /** Human-readable summary of the active filters, shown under the title. */
   filterCaption?: string;
+  /**
+   * The bullets to put on the slide. Passed in rather than recomputed so the
+   * deck matches what the user is looking at: if they clicked "Enhance with
+   * AI", the polished wording is exported, not a freshly regenerated raw set.
+   */
+  talkingPoints: string[];
 }
 
 // chartType -> native PowerPoint chart, or null to fall back to an image.
@@ -119,7 +124,7 @@ export async function exportPptx(
   }
 
   // Talking points panel on the right.
-  const points = talkingPoints(table);
+  const points = cfg.talkingPoints;
   slide.addText("Talking points", { x: 9.1, y: 1.1, w: 3.7, h: 0.4, fontSize: 14, bold: true, color: "002D72" });
   slide.addText(
     points.map((p) => ({ text: p, options: { bullet: true, fontSize: 11, color: "333333", paraSpaceAfter: 6 } })),
