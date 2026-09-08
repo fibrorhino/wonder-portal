@@ -3,42 +3,52 @@
 // Talking points for the current result.
 //
 // Two tiers, both built on the same deterministic fact sheet:
-//   - the default bullets are computed in the browser (lib/insights.ts), so
-//     every figure is exact and they appear instantly;
+//   - the default bullets are computed by the page (lib/insights.ts), so every
+//     figure is exact and they appear instantly;
 //   - "Analyze with AI" asks /api/insights for a written read of the same
 //     figures. That route verifies every number the model returns against the
 //     fact sheet before responding, so the analysis can add judgement about
 //     what matters without being able to add a statistic.
+//
+// The points themselves are owned by the page, not by this panel, so that the
+// PPTX export in the chart panel ships whatever the user is actually reading
+// rather than regenerating its own copy.
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
-import { talkingPoints } from "@/lib/insights";
 import { safeJson } from "@/lib/safeJson";
 
-interface Analysis {
+export interface Analysis {
   headline: string;
   bullets: string[];
   caveats: string[];
+  /** Statements dropped because a figure could not be verified. */
   dropped: number;
+  /** True when verification left nothing usable and the computed bullets stand. */
   fellBack: boolean;
 }
 
 export default function InsightsPanel({
   table,
   spec,
+  basePoints,
+  analysis,
+  onAnalysis,
 }: {
   table: ResultTable;
   spec?: QuerySpec;
+  /** Deterministic bullets computed from the table by the page. */
+  basePoints: string[];
+  /** AI analysis for THIS table, or null. Owned by the page. */
+  analysis: Analysis | null;
+  onAnalysis: (analysis: Analysis | null) => void;
 }) {
-  const basePoints = useMemo(() => talkingPoints(table, spec), [table, spec]);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
-  // An AI analysis (or an error from one) belongs to the specific table it was
-  // produced from. Tagging it with that table lets a new result invalidate it
-  // during render, instead of via an effect that fires a second render pass.
-  const [ai, setAi] = useState<{ table: ResultTable; analysis: Analysis } | null>(null);
+  // An error belongs to the specific table it came from. Tagging it lets a new
+  // result invalidate it during render, instead of via an effect that fires a
+  // second render pass.
   const [errorState, setErrorState] = useState<{ table: ResultTable; message: string } | null>(null);
-  const analysis = ai?.table === table ? ai.analysis : null;
   const error = errorState?.table === table ? errorState.message : null;
 
   const analyze = async () => {
@@ -62,15 +72,12 @@ export default function InsightsPanel({
         });
         return;
       }
-      setAi({
-        table,
-        analysis: {
-          headline: parsed.data.headline ?? "",
-          bullets: parsed.data.bullets ?? [],
-          caveats: parsed.data.caveats ?? [],
-          dropped: parsed.data.dropped ?? 0,
-          fellBack: Boolean(parsed.data.fellBack),
-        },
+      onAnalysis({
+        headline: parsed.data.headline ?? "",
+        bullets: parsed.data.bullets ?? [],
+        caveats: parsed.data.caveats ?? [],
+        dropped: parsed.data.dropped ?? 0,
+        fellBack: Boolean(parsed.data.fellBack),
       });
     } catch (e) {
       setErrorState({ table, message: e instanceof Error ? e.message : "Network error." });
@@ -79,8 +86,8 @@ export default function InsightsPanel({
     }
   };
 
-  const points = analysis && !analysis.fellBack ? analysis.bullets : basePoints;
   const isAi = Boolean(analysis && !analysis.fellBack);
+  const points = isAi && analysis ? analysis.bullets : basePoints;
 
   const copy = async () => {
     const lines = [
@@ -119,7 +126,7 @@ export default function InsightsPanel({
           {analysis && (
             <button
               type="button"
-              onClick={() => setAi(null)}
+              onClick={() => onAnalysis(null)}
               className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white"
             >
               Revert
@@ -139,7 +146,7 @@ export default function InsightsPanel({
 
       {error && <p className="mb-2 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
 
-      {analysis?.headline && (
+      {isAi && analysis?.headline && (
         <p className="mb-3 border-l-2 border-violet-300 pl-3 text-sm font-medium text-slate-800">
           {analysis.headline}
         </p>
@@ -151,7 +158,7 @@ export default function InsightsPanel({
         ))}
       </ul>
 
-      {analysis?.caveats && analysis.caveats.length > 0 && (
+      {isAi && analysis && analysis.caveats.length > 0 && (
         <ul className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-600">
           {analysis.caveats.map((c, i) => (
             <li key={i}>⚠ {c}</li>

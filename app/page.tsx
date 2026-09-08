@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
+import { talkingPoints } from "@/lib/insights";
 import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
 import { shareUrl, specFromLocation, updateLocation } from "@/lib/shareLink";
@@ -13,7 +14,7 @@ import QueryBuilder from "@/components/QueryBuilder";
 import ResultsTable from "@/components/ResultsTable";
 import ChartPanel from "@/components/ChartPanel";
 import StatsPanel from "@/components/StatsPanel";
-import InsightsPanel from "@/components/InsightsPanel";
+import InsightsPanel, { type Analysis } from "@/components/InsightsPanel";
 import ExampleQueries from "@/components/ExampleQueries";
 import RecentQueries from "@/components/RecentQueries";
 import ComparePanel from "@/components/ComparePanel";
@@ -64,6 +65,12 @@ export default function Home() {
   useEffect(() => () => {
     if (timerRef.current) clearInterval(timerRef.current);
   }, []);
+
+  // The AI analysis lives here, not in InsightsPanel, so that the PPTX export
+  // in ChartPanel ships the same bullets the user is actually reading. Tagged
+  // with the table it was produced from, so a new result invalidates it during
+  // render rather than via an effect.
+  const [ai, setAi] = useState<{ table: ResultTable; analysis: Analysis } | null>(null);
 
   const run = async (specToRun: QuerySpec = spec, landOnTab: Tab = "table") => {
     setLoading(true);
@@ -183,6 +190,18 @@ export default function Home() {
     () => (table ? table.columns.map((c) => c.key).join("|") : ""),
     [table],
   );
+
+  // Deterministic bullets, computed once and shared by the insights panel and
+  // the PPTX export. The spec matters: it supplies the rate denominator and the
+  // filter description the fact sheet is built from.
+  const basePoints = useMemo(
+    () => (table ? talkingPoints(table, result?.spec) : []),
+    [table, result?.spec],
+  );
+  const analysis = table && ai?.table === table ? ai.analysis : null;
+  // An analysis that fell back to the computed bullets is not an AI result, so
+  // the export ships the same thing the panel is showing.
+  const points = analysis && !analysis.fellBack ? analysis.bullets : basePoints;
 
   return (
     <div className="flex min-h-full flex-col bg-[#e7f0fa]">
@@ -353,6 +372,7 @@ export default function Home() {
                     table={table}
                     initialChartType={suggestedChartType}
                     spec={result?.spec}
+                    talkingPoints={points}
                   />
                 )}
                 {tab === "stats" && <StatsPanel key={shapeKey} table={table} />}
@@ -369,7 +389,13 @@ export default function Home() {
                   />
                 )}
 
-                <InsightsPanel table={table} spec={result?.spec} />
+                <InsightsPanel
+                  table={table}
+                  spec={result?.spec}
+                  basePoints={basePoints}
+                  analysis={analysis}
+                  onAnalysis={(next) => setAi(next ? { table, analysis: next } : null)}
+                />
               </>
             )}
           </div>
@@ -392,6 +418,28 @@ export default function Home() {
             Hopkins Center for Suicide Prevention. It is not affiliated with,
             operated by, or endorsed by the CDC, and “CDC WONDER” is named here
             only to credit the source of the data.
+          </p>
+          {/* Footnote for the asterisks on the "Run query" and "Ask" buttons.
+              Running a query accepts CDC's data use restrictions on the
+              visitor's behalf, so the terms they are bound by are stated here
+              rather than left implicit. */}
+          <p className="mt-2">
+            * Running a query submits it to CDC WONDER under CDC&apos;s data use
+            restrictions, which are accepted on your behalf. These data are
+            provided for statistical reporting and analysis only. You must make
+            no attempt to learn the identity of any person or establishment
+            included in the data, and must not link them with other data for
+            that purpose; any identity discovered inadvertently must be reported
+            to the Director, NCHS. Full terms:{" "}
+            <a
+              href="https://wonder.cdc.gov/datause.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-slate-700"
+            >
+              CDC WONDER Data Use Restrictions
+            </a>
+            .
           </p>
         </div>
       </footer>

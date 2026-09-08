@@ -59,13 +59,30 @@ export function pointsFromFacts(f: FactSheet): string[] {
   const per = f.ratePer;
 
   // ---- scale ----
-  if (f.totals.deaths !== null) {
+  //
+  // Suppressed cells parse to null and drop out of the sum, so a plain total
+  // understates the truth — and when every cell is suppressed it once reported
+  // "a total of 0 deaths" for data that is merely hidden. These bullets get
+  // exported onto slides, so the total is qualified whenever anything was
+  // suppressed and omitted entirely when nothing is left to count. The rate is
+  // dropped in that case too: its numerator is the same undercount.
+  const suppressed = f.dataQuality.suppressedCells;
+  const rowsLabel = `${fmt(f.rowCount)} row${f.rowCount === 1 ? "" : "s"}`;
+  if (f.totals.deaths === null) {
+    points.push(
+      `This query returned ${rowsLabel}, but every deaths cell was suppressed by CDC, so no total can be shown.`,
+    );
+  } else if (suppressed > 0) {
+    points.push(
+      `This query returned ${rowsLabel} covering at least ${fmt(f.totals.deaths)} deaths — a partial total, because ${fmt(suppressed)} suppressed cell${suppressed === 1 ? "" : "s"} could not be counted.`,
+    );
+  } else {
     const rate =
       f.totals.rate !== null
         ? `, an overall rate of ${fmt(f.totals.rate, 1)} per ${fmt(per)} population`
         : "";
     points.push(
-      `This query returned ${fmt(f.rowCount)} row${f.rowCount === 1 ? "" : "s"} covering ${fmt(f.totals.deaths)} deaths${rate}.`,
+      `This query returned ${rowsLabel} covering ${fmt(f.totals.deaths)} deaths${rate}.`,
     );
   }
 
@@ -159,17 +176,22 @@ export function pointsFromFacts(f: FactSheet): string[] {
   }
 
   // ---- caveats ----
+  //
+  // These are correctness notes, not nice-to-haves, so they are appended AFTER
+  // the trim rather than competing for a slot. Being last in the list, they
+  // were previously the first thing a slice() dropped.
   const q = f.dataQuality;
+  const caveats: string[] = [];
   if (q.suppressedCells > 0) {
-    points.push(
+    caveats.push(
       `${fmt(q.suppressedCells)} cell${q.suppressedCells === 1 ? " was" : "s were"} suppressed by CDC (counts of 1–9) to protect confidentiality and are excluded from these totals; interpret accordingly.`,
     );
   }
   if (q.unreliableCells > 0) {
-    points.push(
+    caveats.push(
       `${fmt(q.unreliableCells)} rate${q.unreliableCells === 1 ? " is" : "s are"} flagged unreliable by CDC because ${q.unreliableCells === 1 ? "it is" : "they are"} based on fewer than 20 deaths.`,
     );
   }
 
-  return points.slice(0, 9);
+  return [...points.slice(0, 8), ...caveats];
 }

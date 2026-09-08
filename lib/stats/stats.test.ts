@@ -14,7 +14,7 @@ import {
   studentTwoSidedP,
 } from "./dist";
 import { computeRegression, ageGroupMidpoint } from "./regression";
-import { chiSquareFromCounts } from "./correlation";
+import { chiSquareFromCounts, pearson, spearman } from "./correlation";
 import { oneWayAnova, trend } from "./summary";
 
 const closeTo = (actual: number, expected: number, tol: number, msg: string) =>
@@ -206,4 +206,44 @@ test("trend computes total change and CAGR", () => {
   closeTo(tr.totalChangePct, 21, 1e-9, "total change %");
   closeTo(tr.cagrPct, 10, 1e-9, "CAGR %");
   assert.equal(tr.periods, 2);
+});
+
+test("correlation returns null, not NaN, when a series has no variance", () => {
+  // Zero variance makes correlation 0/0. NaN is not null, so a `?? "n/a"`
+  // fallback in the UI would have rendered the literal text "NaN".
+  const flatY: [number, number][] = [
+    [2019, 500],
+    [2020, 500],
+    [2021, 500],
+    [2022, 500],
+  ];
+  assert.equal(pearson(flatY), null, "pearson on a flat series");
+  assert.equal(spearman(flatY), null, "spearman on a flat series");
+
+  const flatX: [number, number][] = [
+    [7, 1],
+    [7, 2],
+    [7, 3],
+  ];
+  assert.equal(pearson(flatX), null, "pearson with constant x");
+  assert.equal(spearman(flatX), null, "spearman with constant x");
+});
+
+test("correlation still computes normally on varying data", () => {
+  const rising: [number, number][] = [
+    [1, 2],
+    [2, 4],
+    [3, 6],
+    [4, 8],
+  ];
+  closeTo(pearson(rising)!, 1, 1e-9, "perfect positive correlation");
+  closeTo(spearman(rising)!, 1, 1e-9, "perfect rank correlation");
+
+  const falling: [number, number][] = [
+    [1, 10],
+    [2, 7],
+    [3, 4],
+    [4, 1],
+  ];
+  closeTo(pearson(falling)!, -1, 1e-9, "perfect negative correlation");
 });

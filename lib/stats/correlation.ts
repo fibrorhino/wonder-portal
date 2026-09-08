@@ -64,7 +64,11 @@ export function chiSquareFromCounts(
 export function pearson(pairs: [number, number][]): number | null {
   const clean = pairs.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
   if (clean.length < 3) return null;
-  return sampleCorrelation(clean.map((p) => p[0]), clean.map((p) => p[1]));
+  const r = sampleCorrelation(clean.map((p) => p[0]), clean.map((p) => p[1]));
+  // Correlation is undefined when either series has zero variance (0/0). Return
+  // null so callers show "n/a"; NaN is not null, so a `?? "n/a"` fallback would
+  // have rendered the literal text "NaN" in the UI.
+  return Number.isFinite(r) ? r : null;
 }
 
 export function spearman(pairs: [number, number][]): number | null {
@@ -85,5 +89,7 @@ export function spearman(pairs: [number, number][]): number | null {
   };
   const rx = rank(clean.map((p) => p[0]));
   const ry = rank(clean.map((p) => p[1]));
-  return sampleCorrelation(rx, ry);
+  const rho = sampleCorrelation(rx, ry);
+  // All-tied ranks give zero variance, so rho is 0/0 — see pearson() above.
+  return Number.isFinite(rho) ? rho : null;
 }
