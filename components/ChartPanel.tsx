@@ -7,7 +7,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import Plot, { type PlotHandle } from "./Plot";
-import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
+import type { MeasureKey, QuerySpec, ResultTable } from "@/lib/wonder/types";
 import { figureCaption } from "@/lib/describeSpec";
 import {
   cellLabel,
@@ -46,6 +46,21 @@ const PALETTES: Record<string, string[]> = {
 };
 
 const isBarLike = (t: ChartType) => ["bar", "stackedBar", "horizontalBar"].includes(t);
+
+const OTHER_LABEL = "Other";
+/** Options for how many categories to draw before the tail is folded away. */
+const TOP_N_CHOICES = [5, 8, 10, 15, 20] as const;
+/** Above this many categories the tail is folded by default. */
+const AUTO_FOLD_ABOVE = 12;
+const DEFAULT_TOP_N = 10;
+
+/**
+ * Counts can be pooled into an "Other" bucket by adding them up. Rates cannot:
+ * a rate is deaths per population, and the mean of several rates is not the
+ * rate of the combined group. For a rate the tail is therefore hidden rather
+ * than merged, and the caption says so.
+ */
+const isAdditiveMeasure = (key?: MeasureKey) => key === "deaths" || key === "population";
 
 const VALID_CHART_TYPES: ChartType[] = [
   "line", "bar", "stackedBar", "horizontalBar", "area", "scatter", "bubble",
@@ -89,6 +104,16 @@ export default function ChartPanel({
   const [sortDesc, setSortDesc] = useState(false);
   const [legendPos, setLegendPos] = useState<"top" | "right" | "bottom">("bottom");
   const [showFilters, setShowFilters] = useState(true);
+  // How many categories to draw before folding the tail, remembered PER
+  // DIMENSION. Null means "decide from the data" — grouping by injury mechanism
+  // yields ~70 categories and a legend taller than the figure, which is
+  // unreadable by default; a query with six races needs no folding at all.
+  //
+  // Keyed by dimension because the choice does not transfer: picking "Top 5"
+  // for 70 injury mechanisms and then switching to a pie of 7 years would
+  // otherwise fold five years into "Other", which is nonsense. This is the same
+  // trap the sort toggle fell into when it survived a change of chart type.
+  const [topNByDim, setTopNByDim] = useState<Record<number, number | "all">>({});
 
   // Caption drawn onto the figure so exported images/slides remain
   // self-explanatory: grouping, filters, and the data-source citation.
@@ -101,8 +126,32 @@ export default function ChartPanel({
   const isPie = chartType === "pie" || chartType === "donut";
   const horizontal = chartType === "horizontalBar";
 
-  const { data, annotations, regressionNote } = useMemo(() => {
+  // The dimension whose distinct values become slices (pie) or lines (series).
+  const foldedDimIdx = isPie ? xIdx : seriesIdx;
+  const categoryCount = useMemo(() => {
+    if (foldedDimIdx < 0) return 0;
+    return new Set(rows.map((r) => cellLabel(r[foldedDimIdx]))).size;
+  }, [rows, foldedDimIdx]);
+
+  const topN = topNByDim[foldedDimIdx] ?? null;
+  const setTopN = (value: number | "all") =>
+    setTopNByDim((prev) => ({ ...prev, [foldedDimIdx]: value }));
+
+  const additive = isAdditiveMeasure(yCol?.measureKey);
+  // null = not chosen by the user, so fold only when the chart would be unreadable.
+  const effectiveTopN =
+    topN === "all"
+      ? null
+      : topN === null
+        ? categoryCount > AUTO_FOLD_ABOVE
+          ? DEFAULT_TOP_N
+          : null
+        : topN;
+
+  const { data, annotations, regressionNote, folded } = useMemo(() => {
     const colors = PALETTES[palette];
+    // Set by whichever branch folds a tail, for the caption below the chart.
+    let foldedCount = 0;
 
     // ---- Pie / donut: aggregate the measure by the X category ----
     if (isPie) {
@@ -113,9 +162,22 @@ export default function ChartPanel({
         if (y === null) continue;
         byCat.set(cat, (byCat.get(cat) ?? 0) + y);
       }
-      const entries = [...byCat.entries()];
-      if (sortDesc) entries.sort((a, b) => b[1] - a[1]);
+      let entries = [...byCat.entries()];
+      if (effectiveTopN !== null && entries.length > effectiveTopN + 1) {
+        // Ranking by value is what makes "the top N" meaningful, so the tail is
+        // chosen by size regardless of the sort toggle.
+        const ranked = [...entries].sort((a, b) => b[1] - a[1]);
+        const kept = ranked.slice(0, effectiveTopN);
+        const tail = ranked.slice(effectiveTopN);
+        foldedCount = tail.length;
+        entries = additive
+          ? [...kept, [OTHER_LABEL, tail.reduce((sum, [, v]) => sum + v, 0)] as [string, number]]
+          : kept;
+      } else if (sortDesc) {
+        entries.sort((a, b) => b[1] - a[1]);
+      }
       return {
+        folded: foldedCount,
         data: [
           {
             type: "pie",
@@ -132,7 +194,11 @@ export default function ChartPanel({
       };
     }
 
-    const nil = { annotations: [] as Record<string, unknown>[], regressionNote: null as string | null };
+    const nil = {
+      annotations: [] as Record<string, unknown>[],
+      regressionNote: null as string | null,
+      folded: 0,
+    };
 
     // ---- Heatmap: X category × series category, colored by the measure ----
     if (chartType === "heatmap") {
@@ -228,6 +294,39 @@ export default function ChartPanel({
       seriesMap.set(seriesName, bucket);
     }
 
+    // Fold the smallest series into "Other". A query grouped by injury
+    // mechanism produces ~70 series: a legend taller than the figure, and 60
+    // lines hugging zero that hide the handful that carry the data.
+    if (effectiveTopN !== null && seriesIdx >= 0 && seriesMap.size > effectiveTopN + 1) {
+      const ranked = [...seriesMap.entries()]
+        .map(([name, b]) => [name, b.y.reduce((a, v) => a + v, 0)] as const)
+        .sort((a, b) => b[1] - a[1]);
+      const tail = ranked.slice(effectiveTopN).map(([name]) => name);
+      foldedCount = tail.length;
+
+      // Sum the tail per x value, so "Other" is a real series over the same
+      // axis rather than a bare total.
+      const otherByX = new Map<string | number, number>();
+      for (const name of tail) {
+        const b = seriesMap.get(name);
+        if (!b) continue;
+        b.x.forEach((xv, i) => otherByX.set(xv, (otherByX.get(xv) ?? 0) + b.y[i]));
+        seriesMap.delete(name);
+      }
+      if (additive && otherByX.size > 0) {
+        const xs = [...otherByX.keys()];
+        seriesMap.set(OTHER_LABEL, {
+          x: xs,
+          y: xs.map((xv) => otherByX.get(xv) as number),
+          nx: xs
+            .map((xv) =>
+              typeof xv === "number" ? xv : numericEncode(xCol?.variableKey, String(xv)),
+            )
+            .filter((n): n is number => n !== null),
+        });
+      }
+    }
+
     // Optional sort (single-series bar charts only). The toggle is offered for
     // bar and pie types, but `sortDesc` survives a change of chart type and the
     // toggle is then hidden — so without the isBarLike guard, switching a
@@ -295,9 +394,20 @@ export default function ChartPanel({
       }
     }
 
-    return { data: traces, annotations: annos, regressionNote: note };
+    return { data: traces, annotations: annos, regressionNote: note, folded: foldedCount };
     // logY is deliberately absent: it only affects the axis type in `layout`.
-  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, dataLabels, smooth, sortDesc, xCol, yCol]);
+  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, dataLabels, smooth, sortDesc, xCol, yCol, effectiveTopN, additive]);
+
+  // A figure showing an "Other" slice is misleading in a report unless it says
+  // what "Other" is, so the fold is recorded in the caption that travels with
+  // the exported PNG and slide — not just in the on-screen note.
+  const drawnCaptionLines = useMemo(() => {
+    if (folded <= 0) return captionLines;
+    const note = additive
+      ? `Showing the largest ${effectiveTopN ?? 0}; the remaining ${folded} categories are combined as “Other”.`
+      : `Showing the largest ${effectiveTopN ?? 0}; ${folded} smaller categories are not shown (rates cannot be pooled).`;
+    return [...captionLines, note];
+  }, [captionLines, folded, additive, effectiveTopN]);
 
   const legend = useMemo(() => {
     if (legendPos === "right") return { orientation: "v" as const, x: 1.02, y: 1, xanchor: "left" as const };
@@ -315,7 +425,7 @@ export default function ChartPanel({
     // on-screen plot and the 600px export, so the same offset landed in two
     // different places. Plotly lays the title block out itself, above
     // everything and clear of any legend, in both.
-    const showCaption = showFilters && captionLines.length > 0;
+    const showCaption = showFilters && drawnCaptionLines.length > 0;
     const base: Record<string, unknown> = {
       title: {
         text: title || " ",
@@ -328,7 +438,7 @@ export default function ChartPanel({
         ...(showCaption
           ? {
               subtitle: {
-                text: captionLines.map((l) => `<i>${l}</i>`).join("<br>"),
+                text: drawnCaptionLines.map((l) => `<i>${l}</i>`).join("<br>"),
                 font: { size: 10, color: "#64748b" },
               },
             }
@@ -338,7 +448,7 @@ export default function ChartPanel({
       plot_bgcolor: "#ffffff",
       // Room at the top for the title plus however many caption lines.
       margin: {
-        t: showCaption ? 46 + captionLines.length * 15 : 50,
+        t: showCaption ? 46 + drawnCaptionLines.length * 15 : 50,
         r: 20,
         b: 60,
         l: 70,
@@ -369,7 +479,7 @@ export default function ChartPanel({
       xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
       yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
     };
-  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, captionLines]);
+  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, drawnCaptionLines]);
 
   if (measures.length === 0 || dims.length === 0) {
     return <p className="text-sm text-slate-500">No chartable data.</p>;
@@ -440,6 +550,36 @@ export default function ChartPanel({
         )}
       </div>
 
+      {/* Category folding — only meaningful when something is being folded. */}
+      {foldedDimIdx >= 0 && categoryCount > 5 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Field label={isPie ? "Slices shown" : "Series shown"}>
+            <select
+              value={effectiveTopN === null ? "all" : String(effectiveTopN)}
+              onChange={(e) =>
+                setTopN(e.target.value === "all" ? "all" : Number(e.target.value))
+              }
+              className="ctrl"
+            >
+              {TOP_N_CHOICES.filter((n) => n < categoryCount).map((n) => (
+                <option key={n} value={n}>
+                  Top {n}
+                  {additive ? " + Other" : ""}
+                </option>
+              ))}
+              <option value="all">Show all {categoryCount}</option>
+            </select>
+          </Field>
+          {folded > 0 && (
+            <p className="text-xs text-slate-500">
+              {additive
+                ? `${folded} smaller categories combined into “Other”.`
+                : `${folded} smaller categories hidden — ${yCol?.label ?? "this measure"} is a rate, and rates cannot be added together.`}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* toggles */}
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-700">
         <Toggle label="Data labels" checked={dataLabels} onChange={setDataLabels} />
@@ -475,7 +615,7 @@ export default function ChartPanel({
               table,
               // Both wanted: captionLines carries the grouping/filters/source
               // block, talkingPoints ships the bullets the user is reading.
-              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption, captionLines, talkingPoints },
+              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption, captionLines: drawnCaptionLines, talkingPoints },
               png ?? null,
             );
           }}
