@@ -74,6 +74,8 @@ Write:
 Hard rules:
 - Use ONLY numbers that appear in the fact sheet, or a ratio/difference/percent change between two figures that appear there. Never estimate, extrapolate, or recompute a rate from scratch. Numbers that cannot be traced back to the fact sheet are removed automatically, so an invented figure costs you the whole sentence.
 - Copy figures as given. Do not re-round a rate or drop a digit from a count.
+- Never mix figures across the CRUDE and AGE-ADJUSTED lines. Each line carries its own highest, lowest and ratio; if you quote age-adjusted rates, the ratio must be the AGE-ADJUSTED ratio from that same line, not the crude one. Both are real numbers, so this is not caught automatically — a sentence pairing age-adjusted rates with the crude ratio is simply wrong.
+- Name the measure you are quoting. A figure from the AGE-ADJUSTED line is an age-adjusted rate and must never be called a crude rate, and vice versa.
 - Describe the data, do not explain it. No causal claims, no attributing a trend to policy, the pandemic, or any other outside event unless the fact sheet contains it. "Deaths rose 14%" is right; "deaths rose 14% because of X" is not.
 - These are real deaths, often by suicide. Use plain, respectful, person-first language. No "spike", "alarming", "epidemic", "surge", "skyrocketed", or any word that editorialises. State magnitudes numerically instead.
 - Do not recommend interventions or policy.
@@ -139,17 +141,41 @@ export async function POST(req: NextRequest) {
         if (res.ok) break outer;
         // 404 means this model id is gone — move on rather than retrying it.
         if (res.status === 404) break;
+        // 429 is the project's daily free-tier quota, shared across every
+        // model, so trying another one or waiting a second achieves nothing.
+        if (res.status === 429) break outer;
         if (res.status !== 503) break outer;
       }
     }
     if (!res || !res.ok) {
       const detail = res ? await res.text() : "no response";
-      const busy =
-        res?.status === 503 ? " Gemini is temporarily overloaded — try again in a moment." : "";
+      // A raw API error blob tells the reader nothing they can act on, and the
+      // two cases that actually happen have different answers: wait a moment,
+      // or wait until tomorrow.
+      if (res?.status === 429) {
+        return NextResponse.json(
+          {
+            ok: false,
+            // The free tier enforces both a per-minute and a per-day limit and
+            // returns 429 for either, without saying which — so the message
+            // must not claim to know. In practice it is almost always the
+            // per-minute one and clears on its own.
+            error:
+              "AI analysis is rate-limited right now. This usually clears within a minute — try again shortly. If it keeps happening, the daily free-tier limit has been reached and resets at midnight Pacific. The talking points below are computed directly from the data and do not need the AI.",
+          },
+          { status: 429 },
+        );
+      }
+      if (res?.status === 503) {
+        return NextResponse.json(
+          { ok: false, error: "The AI service is temporarily overloaded. Try again in a moment." },
+          { status: 503 },
+        );
+      }
       return NextResponse.json(
         {
           ok: false,
-          error: `Gemini API error (HTTP ${res?.status ?? "?"}): ${detail.slice(0, 200)}${busy}`,
+          error: `AI analysis failed (HTTP ${res?.status ?? "?"}): ${detail.slice(0, 200)}`,
         },
         { status: 502 },
       );

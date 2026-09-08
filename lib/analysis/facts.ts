@@ -599,14 +599,14 @@ export function renderFactSheet(f: FactSheet): string {
     }
     if (d.highestRate?.rate != null && d.lowestRate?.rate != null) {
       L.push(
-        `- Highest rate: ${d.highestRate.label} at ${fmt(d.highestRate.rate, 2)}; lowest: ${d.lowestRate.label} at ${fmt(d.lowestRate.rate, 2)}` +
-          (d.rateRatio ? `; ratio ${fmt(d.rateRatio, 2)}x` : ""),
+        `- CRUDE rate, highest: ${d.highestRate.label} at ${fmt(d.highestRate.rate, 2)}; lowest: ${d.lowestRate.label} at ${fmt(d.lowestRate.rate, 2)}` +
+          (d.rateRatio ? `; CRUDE ratio ${fmt(d.rateRatio, 2)}x` : ""),
       );
     }
     if (d.highestAdjusted?.ageAdjustedRate != null && d.lowestAdjusted?.ageAdjustedRate != null) {
       L.push(
-        `- AGE-ADJUSTED (use this to compare groups, not the crude rate): highest ${d.highestAdjusted.label} at ${fmt(d.highestAdjusted.ageAdjustedRate, 2)}; lowest ${d.lowestAdjusted.label} at ${fmt(d.lowestAdjusted.ageAdjustedRate, 2)}` +
-          (d.adjustedRatio ? `; ratio ${fmt(d.adjustedRatio, 2)}x` : ""),
+        `- AGE-ADJUSTED rate (use this to compare groups, not the crude rate), highest: ${d.highestAdjusted.label} at ${fmt(d.highestAdjusted.ageAdjustedRate, 2)}; lowest: ${d.lowestAdjusted.label} at ${fmt(d.lowestAdjusted.ageAdjustedRate, 2)}` +
+          (d.adjustedRatio ? `; AGE-ADJUSTED ratio ${fmt(d.adjustedRatio, 2)}x` : ""),
       );
     }
     if (d.countRateDiverges && d.highestRate) {
