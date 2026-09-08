@@ -6,7 +6,14 @@
 tunnel: <TUNNEL_ID>
 credentials-file: C:\dev\wonderwall\tools\<TUNNEL_ID>.json
 
+# Both hostnames route to the same local server. mortality.nestadt.org is the
+# name the site goes by; wonderwall.nestadt.org is kept so links already shared
+# keep working. Adding a hostname here is not enough on its own — it also needs
+# a DNS route:
+#   cloudflared.exe tunnel route dns wonder-portal <hostname>
 ingress:
+  - hostname: mortality.nestadt.org
+    service: http://localhost:3000
   - hostname: wonderwall.nestadt.org
     service: http://localhost:3000
   - service: http_status:404

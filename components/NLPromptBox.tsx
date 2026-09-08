@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import type { QuerySpec } from "@/lib/wonder/types";
 import { safeJson } from "@/lib/safeJson";
+import { DataUseFootnote, DataUseMark } from "./DataUseNotice";
 
 export interface NLResult {
   spec: QuerySpec;
@@ -82,7 +83,7 @@ export default function NLPromptBox({
           {enabled ? "AI enabled" : "AI not configured"}
         </span>
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -98,11 +99,12 @@ export default function NLPromptBox({
           type="button"
           onClick={submit}
           disabled={!enabled || loading || !text.trim()}
-          className="shrink-0 self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="shrink-0 self-stretch rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300 sm:self-start"
         >
-          {loading ? "Thinking…" : "Ask"}
+          {loading ? "Thinking…" : <>Ask<DataUseMark /></>}
         </button>
       </div>
+      <DataUseFootnote className="mt-1.5" />
       {error && (
         <p className="mt-2 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
       )}

@@ -17,6 +17,8 @@ export interface PptxChartConfig {
   measureLabel: string;
   /** Human-readable summary of the active filters, shown under the title. */
   filterCaption?: string;
+  /** Caption lines (grouping / filters / source) drawn under the title. */
+  captionLines?: string[];
 }
 
 // chartType -> native PowerPoint chart, or null to fall back to an image.
@@ -74,9 +76,16 @@ export async function exportPptx(
   const slide = pptx.addSlide();
   const title = cfg.title || "CDC WONDER figure";
   slide.addText(title, { x: 0.5, y: 0.3, w: 12.3, h: 0.5, fontSize: 22, bold: true, color: "002D72" });
-  if (cfg.filterCaption) {
-    slide.addText(cfg.filterCaption, {
-      x: 0.5, y: 0.78, w: 12.3, h: 0.3, fontSize: 11, italic: true, color: "64748B",
+  // One block, newline-separated, so the source line travels with the slide.
+  const captionLines = cfg.captionLines?.length
+    ? cfg.captionLines
+    : cfg.filterCaption
+      ? [cfg.filterCaption]
+      : [];
+  if (captionLines.length) {
+    slide.addText(captionLines.join(String.fromCharCode(10)), {
+      x: 0.5, y: 0.78, w: 12.3, h: 0.16 * (captionLines.length + 1),
+      fontSize: 10, italic: true, color: "64748B", lineSpacingMultiple: 1.0,
     });
   }
 

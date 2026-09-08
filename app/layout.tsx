@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WONDER Portal — CDC WONDER explorer",
+  title: "Mortality Data Portal",
   description:
     "Query, analyze, and visualize CDC WONDER Underlying Cause of Death (Single Race, 2018–2024) data with customizable tables, figures, and statistics.",
 };

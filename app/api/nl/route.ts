@@ -136,7 +136,14 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
   }
 
   const measures = (out.measures ?? []).filter(isMeasureKey);
-  if (measures.length === 0) measures.push("deaths");
+  if (!measures.includes("deaths")) measures.unshift("deaths");
+  // Population is the denominator the insights engine needs to compute
+  // marginal rates, and WONDER returns it regardless of whether it is asked
+  // for, so it is always kept.
+  if (!measures.includes("population")) measures.splice(1, 0, "population");
+  // Age-adjusted rate by default, matching the manual builder. It is dropped
+  // downstream when the query groups by age, so asking for it is always safe.
+  if (!measures.includes("ageAdjustedRate")) measures.push("ageAdjustedRate");
 
   const filters: Record<string, string[]> = {};
   for (const [key, codes] of Object.entries(out.filters ?? {})) {

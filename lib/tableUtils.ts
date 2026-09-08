@@ -1,7 +1,7 @@
 // Helpers for turning a ResultTable into chartable / analyzable series.
 
-import type { ResultCell, ResultColumn, ResultTable } from "@/lib/wonder/types";
-import { ageGroupMidpoint, monthOrdinal } from "@/lib/stats/regression";
+import type { ResultCell, ResultColumn, ResultTable } from "./wonder/types";
+import { ageGroupMidpoint, monthOrdinal } from "./stats/regression";
 
 export interface ColRef {
   index: number;

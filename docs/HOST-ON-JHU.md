@@ -114,8 +114,10 @@ The failure mode here is *silent*: if the app won't start, WinSW retries every
 **1. External monitoring — two monitors, watching different things.**
 
 *Is the site up?* A free UptimeRobot **keyword** monitor on
-`https://wonderwall.nestadt.org`, alerting when the keyword `WONDER Portal` is
-absent. Keyword rather than plain HTTP because Cloudflare will answer even when
+`https://wonderwall.nestadt.org`, alerting when the keyword `Mortality Data
+Portal` is absent. (This was `WONDER Portal` until the site was renamed in
+September 2026 — if the monitor still watches the old string it will report the
+site down as soon as the rename is deployed.) Keyword rather than plain HTTP because Cloudflare will answer even when
 this machine is gone; that string comes from the app's own header, so it only
 appears if the app really rendered. This is the one that tells you a reboot went
 badly. (If you change the header text, update the monitor.)

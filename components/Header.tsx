@@ -1,8 +1,12 @@
 "use client";
 
 // App header: JHU Center for Suicide Prevention logo (links out to the center)
-// plus the WONDER Portal title. The logo is loaded from /logo.png; if that file
-// isn't present yet it falls back to a clean text wordmark so nothing looks broken.
+// plus the site title. The logo is loaded from /logo.png; if that file isn't
+// present yet it falls back to a clean text wordmark so nothing looks broken.
+//
+// The title deliberately avoids "WONDER" so the site never reads as a CDC
+// property; CDC WONDER is credited as the data source instead (subtitle +
+// footer + the data-use notice on every query control).
 
 import { useState } from "react";
 
@@ -13,7 +17,7 @@ export default function Header() {
 
   return (
     <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-7xl items-center gap-4 px-4 py-3">
+      <div className="mx-auto flex max-w-7xl flex-col items-start gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
         <a
           href={CENTER_URL}
           target="_blank"
@@ -26,7 +30,7 @@ export default function Header() {
             <img
               src="/logo.png"
               alt="Johns Hopkins Bloomberg School of Public Health — Center for Suicide Prevention"
-              className="h-20 w-auto"
+              className="h-12 w-auto sm:h-20"
               onError={() => setLogoOk(false)}
             />
           ) : (
@@ -41,8 +45,8 @@ export default function Header() {
           )}
         </a>
 
-        <div className="ml-auto flex flex-col items-end text-right">
-          <h1 className="text-lg font-bold text-slate-900">WONDER Portal</h1>
+        <div className="flex flex-col items-start text-left sm:ml-auto sm:items-end sm:text-right">
+          <h1 className="text-lg font-bold text-slate-900">Mortality Data Portal</h1>
           <p className="text-xs text-slate-500">
             Query, analyze &amp; visualize CDC WONDER mortality data
           </p>

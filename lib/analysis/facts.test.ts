@@ -1,0 +1,293 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import type { QuerySpec, ResultCell, ResultColumn, ResultTable } from "../wonder/types";
+import { buildFactSheet, keyFigures, renderFactSheet } from "./facts";
+import { buildAllowSet, verifyStatements } from "./verify";
+
+const n = (v: number): ResultCell => ({ value: v, raw: String(v) });
+const s = (v: string): ResultCell => ({ value: v, raw: v });
+const suppressed = (): ResultCell => ({ value: null, raw: "Suppressed", flag: "suppressed" });
+
+function makeTable(
+  dims: { key: string; label: string }[],
+  measures: ("deaths" | "population" | "crudeRate" | "ageAdjustedRate")[],
+  rows: ResultCell[][],
+): ResultTable {
+  const columns: ResultColumn[] = [
+    ...dims.map((d) => ({
+      key: `dim_${d.key}`,
+      label: d.label,
+      kind: "dimension" as const,
+      variableKey: d.key,
+    })),
+    ...measures.map((m) => ({
+      key: `m_${m}`,
+      label: m,
+      kind: "measure" as const,
+      measureKey: m,
+    })),
+  ];
+  return {
+    columns,
+    rows,
+    rowIsTotal: rows.map(() => false),
+    caveats: [],
+    rowCount: rows.length,
+  };
+}
+
+const spec = (groupBy: string[]): QuerySpec => ({
+  database: "D158",
+  groupBy,
+  measures: ["deaths", "population", "crudeRate"],
+  filters: {},
+  options: { ratePer: 100000 },
+});
+
+test("marginal rates use summed person-years across population-splitting dimensions", () => {
+  // year x sex: collapsing either dimension leaves a valid denominator.
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "sex", label: "Sex" },
+    ],
+    ["deaths", "population"],
+    [
+      [s("2020"), s("Male"), n(300), n(1_000_000)],
+      [s("2020"), s("Female"), n(100), n(1_000_000)],
+      [s("2021"), s("Male"), n(400), n(1_000_000)],
+      [s("2021"), s("Female"), n(100), n(1_000_000)],
+    ],
+  );
+  const f = buildFactSheet(table, spec(["year", "sex"]));
+
+  assert.equal(f.totals.deaths, 900);
+  assert.equal(f.totals.population, 4_000_000);
+  assert.equal(f.totals.rate, 22.5);
+
+  const sexDim = f.dimensions.find((d) => d.variableKey === "sex");
+  assert.ok(sexDim);
+  assert.equal(sexDim.ratesValid, true);
+  const male = sexDim.categories.find((c) => c.label === "Male");
+  // 700 deaths over 2,000,000 person-years = 35 per 100k
+  assert.equal(male?.deaths, 700);
+  assert.equal(male?.population, 2_000_000);
+  assert.equal(male?.rate, 35);
+});
+
+test("rates are withheld when collapsing a dimension that repeats the population", () => {
+  // year x mechanism: every mechanism row carries the same population, so
+  // summing over mechanisms to get a per-year denominator would double count.
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "injuryMechanism", label: "Injury Mechanism" },
+    ],
+    ["deaths", "population"],
+    [
+      [s("2020"), s("Firearm"), n(300), n(1_000_000)],
+      [s("2020"), s("Poisoning"), n(200), n(1_000_000)],
+      [s("2021"), s("Firearm"), n(350), n(1_000_000)],
+      [s("2021"), s("Poisoning"), n(150), n(1_000_000)],
+    ],
+  );
+  const f = buildFactSheet(table, spec(["year", "injuryMechanism"]));
+
+  // Total population is not summable here at all.
+  assert.equal(f.totals.population, null);
+  assert.equal(f.totals.rate, null);
+
+  const yearDim = f.dimensions.find((d) => d.variableKey === "year");
+  assert.equal(yearDim?.ratesValid, false);
+  assert.equal(yearDim?.categories[0].rate, null);
+
+  // Collapsing the year dimension IS valid (person-years), so mechanism rates exist.
+  const mechDim = f.dimensions.find((d) => d.variableKey === "injuryMechanism");
+  assert.equal(mechDim?.ratesValid, true);
+  const firearm = mechDim?.categories.find((c) => c.label === "Firearm");
+  assert.equal(firearm?.deaths, 650);
+  assert.equal(firearm?.population, 2_000_000);
+  assert.equal(firearm?.rate, 32.5);
+});
+
+test("count-vs-rate divergence is detected", () => {
+  const table = makeTable(
+    [{ key: "race6", label: "Race" }],
+    ["deaths", "population"],
+    [
+      [s("White"), n(1000), n(100_000_000)], // most deaths, low rate
+      [s("Black or African American"), n(400), n(10_000_000)], // fewer deaths, higher rate
+    ],
+  );
+  const f = buildFactSheet(table, spec(["race6"]));
+  const d = f.dimensions[0];
+  assert.equal(d.countRateDiverges, true);
+  assert.equal(d.highestRate?.label, "Black or African American");
+  assert.equal(d.highestRate?.rate, 4);
+  assert.equal(d.lowestRate?.rate, 1);
+  assert.equal(d.rateRatio, 4);
+});
+
+test("time facts capture trend, peak and the largest single-period move", () => {
+  const table = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths"],
+    [[s("2020"), n(100)], [s("2021"), n(200)], [s("2022"), n(150)]],
+  );
+  const f = buildFactSheet(table, spec(["year"]));
+  assert.ok(f.time);
+  assert.equal(f.time.deathsTrend?.first, 100);
+  assert.equal(f.time.deathsTrend?.last, 150);
+  assert.equal(f.time.deathsTrend?.totalChangePct, 50);
+  assert.equal(f.time.peak?.label, "2021");
+  assert.equal(f.time.trough?.label, "2020");
+  assert.equal(f.time.largestStep?.from, "2020");
+  assert.equal(f.time.largestStep?.to, "2021");
+  assert.equal(f.time.largestStep?.changePct, 100);
+});
+
+test("category labels containing spaces survive the interaction cross-tab", () => {
+  const table = makeTable(
+    [
+      { key: "sex", label: "Sex" },
+      { key: "injuryMechanism", label: "Injury Mechanism" },
+    ],
+    ["deaths"],
+    [
+      [s("Male"), s("Firearm discharge"), n(900)],
+      [s("Male"), s("Poisoning by drugs"), n(100)],
+      [s("Female"), s("Firearm discharge"), n(100)],
+      [s("Female"), s("Poisoning by drugs"), n(400)],
+    ],
+  );
+  const f = buildFactSheet(table, spec(["sex", "injuryMechanism"]));
+  assert.ok(f.interaction);
+  const cells = [...f.interaction.overRepresented, ...f.interaction.underRepresented];
+  // Multi-word labels must come back intact, not truncated at the first space.
+  assert.ok(cells.some((c) => c.colLabel === "Firearm discharge"));
+  const maleFirearm = f.interaction.overRepresented.find(
+    (c) => c.rowLabel === "Male" && c.colLabel === "Firearm discharge",
+  );
+  assert.ok(maleFirearm);
+  // rowTotal 1000 * colTotal 1000 / grand 1500 = 666.67 expected vs 900 observed
+  assert.ok(Math.abs(maleFirearm.expected - 666.667) < 0.01);
+  assert.ok(maleFirearm.ratio > 1.3);
+});
+
+test("suppressed cells are counted and left out of totals", () => {
+  const table = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths"],
+    [[s("2020"), n(100)], [s("2021"), suppressed()]],
+  );
+  const f = buildFactSheet(table, spec(["year"]));
+  assert.equal(f.totals.deaths, 100);
+  assert.equal(f.dataQuality.suppressedCells, 1);
+});
+
+test("verification accepts fact-sheet figures and derived comparisons", () => {
+  const table = makeTable(
+    [{ key: "sex", label: "Sex" }],
+    ["deaths", "population"],
+    [[s("Male"), n(3000), n(1_000_000)], [s("Female"), n(1000), n(1_000_000)]],
+  );
+  const f = buildFactSheet(table, spec(["sex"]));
+  const allow = buildAllowSet(renderFactSheet(f), keyFigures(f));
+
+  const { kept, dropped } = verifyStatements(
+    [
+      "Male deaths totalled 3,000, three times the 1,000 recorded among females.",
+      "The male rate of 300.00 per 100,000 is 3.00 times the female rate.",
+      "Deaths among males reached 3,742 over the period.", // invented
+    ],
+    allow,
+  );
+  assert.equal(kept.length, 2);
+  assert.equal(dropped.length, 1);
+  assert.ok(dropped[0].figures.includes("3,742"));
+});
+
+test("verification rejects a plausible-looking but wrong percentage", () => {
+  const table = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths"],
+    [[s("2020"), n(1000)], [s("2021"), n(1100)]],
+  );
+  const f = buildFactSheet(table, spec(["year"]));
+  const allow = buildAllowSet(renderFactSheet(f), keyFigures(f));
+  const { kept, dropped } = verifyStatements(
+    ["Deaths rose 10.0% between 2020 and 2021.", "Deaths rose 37.4% between 2020 and 2021."],
+    allow,
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(dropped.length, 1);
+});
+
+test("a year range in the dataset name is not misread as a negative number", () => {
+  // "Underlying Cause of Death, 2018-2024" must contribute 2018 AND 2024 to the
+  // allow set; a signed regex turned the second into -2024 and then rejected
+  // any sentence that mentioned the end year.
+  const table = makeTable([{ key: "sex", label: "Sex" }], ["deaths"], [
+    [s("Male"), n(100)],
+    [s("Female"), n(50)],
+  ]);
+  const f = buildFactSheet(table, spec(["sex"]));
+  const sheet = renderFactSheet(f);
+  assert.ok(sheet.includes("2018-2024"), "dataset label should carry the year range");
+
+  const allow = buildAllowSet(sheet, keyFigures(f));
+  const { kept, dropped } = verifyStatements(
+    ["Male deaths totalled 100 across 2018 through 2024."],
+    allow,
+  );
+  assert.equal(kept.length, 1);
+  assert.equal(dropped.length, 0);
+});
+
+test("an unsigned figure still matches a negative change in the fact sheet", () => {
+  const table = makeTable([{ key: "year", label: "Year" }], ["deaths"], [
+    [s("2020"), n(1000)],
+    [s("2021"), n(800)],
+  ]);
+  const f = buildFactSheet(table, spec(["year"]));
+  const allow = buildAllowSet(renderFactSheet(f), keyFigures(f));
+  const { kept } = verifyStatements(["Deaths fell 20.0% between 2020 and 2021."], allow);
+  assert.equal(kept.length, 1);
+});
+
+test("age-adjusted rates are taken per row and only when unambiguous", () => {
+  const oneRowPerCategory = makeTable(
+    [{ key: "race6", label: "Race" }],
+    ["deaths", "population", "crudeRate", "ageAdjustedRate"],
+    [
+      [s("White"), n(291969), n(1_760_382_097), n(16.6), n(15.7)],
+      [s("More than one race"), n(4963), n(68_475_168), n(7.2), n(8.6)],
+    ],
+  );
+  const f = buildFactSheet(oneRowPerCategory, spec(["race6"]));
+  const d = f.dimensions[0];
+  assert.equal(d.categories.find((c) => c.label === "White")?.ageAdjustedRate, 15.7);
+  assert.equal(d.highestAdjusted?.label, "White");
+  assert.equal(d.lowestAdjusted?.label, "More than one race");
+  assert.ok(Math.abs((d.adjustedRatio ?? 0) - 15.7 / 8.6) < 1e-9);
+
+  // Two rows per category: an age-adjusted rate cannot be summed or averaged
+  // back together, so it must be withheld rather than guessed.
+  const twoRows = makeTable(
+    [
+      { key: "race6", label: "Race" },
+      { key: "sex", label: "Sex" },
+    ],
+    ["deaths", "population", "crudeRate", "ageAdjustedRate"],
+    [
+      [s("White"), s("Male"), n(200), n(1000), n(20), n(19)],
+      [s("White"), s("Female"), n(100), n(1000), n(10), n(11)],
+      [s("Asian"), s("Male"), n(50), n(1000), n(5), n(4)],
+      [s("Asian"), s("Female"), n(25), n(1000), n(2.5), n(3)],
+    ],
+  );
+  const g = buildFactSheet(twoRows, spec(["race6", "sex"]));
+  const raceDim = g.dimensions.find((x) => x.variableKey === "race6");
+  assert.equal(raceDim?.categories[0].ageAdjustedRate, null);
+  assert.equal(raceDim?.adjustedRatio, null);
+});

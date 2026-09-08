@@ -1,22 +1,16 @@
-// Rule-based "talking points" for a ResultTable — no AI required. Inspects the
-// aggregated data and emits a few plain-English observations (total, top/bottom
-// groups, time trend, suppression). A later AI pass can polish these; the raw
-// facts here are deterministic and safe.
+// Rule-based "talking points" for a ResultTable — no AI required.
+//
+// Everything comes from the deterministic fact sheet (lib/analysis/facts.ts),
+// so every figure is exact. This is what the panel shows before (and instead
+// of) an AI analysis: totals, the shape of the leading categories, rate-based
+// disparities, the time trend, per-series movement, concentration relative to
+// what independence would predict, and data-quality caveats.
 
-import type { ResultTable } from "./wonder/types";
-import {
-  cellLabel,
-  cellNumber,
-  dataRows,
-  dimensionCols,
-  measureCols,
-  numericEncode,
-} from "./tableUtils";
-import { trend } from "./stats/summary";
+import type { QuerySpec, ResultTable } from "./wonder/types";
+import { buildFactSheet, fmt, type CategoryFact, type FactSheet } from "./analysis/facts";
 
-function fmt(n: number, d = 0): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: d });
-}
+const pct = (n: number | null | undefined, d = 1) =>
+  n === null || n === undefined || !Number.isFinite(n) ? "" : `${fmt(n, d)}%`;
 
 // A respectful subject noun for describing a category of a given dimension,
 // e.g. race -> "population", age -> "age group". Keeps the phrasing human and
@@ -50,82 +44,132 @@ function subjectPhrase(value: string, variableKey: string | undefined): string {
   return `${value} ${noun}`;
 }
 
-export function talkingPoints(table: ResultTable): string[] {
-  const rows = dataRows(table);
-  const dims = dimensionCols(table);
-  const measures = measureCols(table);
-  if (rows.length === 0 || measures.length === 0) return ["No records matched this query."];
+const rateText = (c: CategoryFact, per: number) =>
+  c.rate === null ? "" : ` (${fmt(c.rate, 1)} per ${fmt(per)})`;
 
-  const mCol = measures.find((m) => m.column.measureKey === "deaths") ?? measures[0];
-  const isRate = mCol.column.measureKey === "crudeRate" || mCol.column.measureKey === "ageAdjustedRate";
-  const mLabel = mCol.column.label.toLowerCase();
-  const mi = mCol.index;
+/** Talking points computed straight from the table. */
+export function talkingPoints(table: ResultTable, spec?: QuerySpec): string[] {
+  return pointsFromFacts(buildFactSheet(table, spec));
+}
+
+export function pointsFromFacts(f: FactSheet): string[] {
+  if (f.rowCount === 0) return ["No records matched this query."];
 
   const points: string[] = [];
+  const per = f.ratePer;
 
-  // Suppression
-  const suppressed = rows.filter((r) => r[mi]?.flag === "suppressed").length;
-
-  // Total (only meaningful for counts, not rates)
-  const values = rows.map((r) => cellNumber(r[mi])).filter((v): v is number => v !== null);
-  const total = values.reduce((a, b) => a + b, 0);
-  if (!isRate) {
+  // ---- scale ----
+  if (f.totals.deaths !== null) {
+    const rate =
+      f.totals.rate !== null
+        ? `, an overall rate of ${fmt(f.totals.rate, 1)} per ${fmt(per)} population`
+        : "";
     points.push(
-      `This query returned ${fmt(rows.length)} group${rows.length === 1 ? "" : "s"}, encompassing a total of ${fmt(total)} ${mLabel}.`,
+      `This query returned ${fmt(f.rowCount)} row${f.rowCount === 1 ? "" : "s"} covering ${fmt(f.totals.deaths)} deaths${rate}.`,
     );
   }
 
-  // Primary categorical dimension (first non-time dimension), else first dim
-  const timeKeys = ["year", "month"];
-  const catDim = dims.find((d) => !timeKeys.includes(d.column.variableKey ?? "")) ?? dims[0];
-  if (catDim) {
-    const byCat = new Map<string, number>();
-    for (const r of rows) {
-      const k = cellLabel(r[catDim.index]);
-      const v = cellNumber(r[mi]);
-      if (v !== null) byCat.set(k, (byCat.get(k) ?? 0) + v);
+  // ---- leading categories on the main categorical dimension ----
+  const catDim = f.dimensions.find((d) => !d.isTime);
+  if (catDim && catDim.categories.length >= 2) {
+    const vk = catDim.variableKey;
+    const ranked = [...catDim.categories].sort((a, b) => (b.deaths ?? -1) - (a.deaths ?? -1));
+    const top = ranked[0];
+    const share = top.sharePct !== null ? `, ${pct(top.sharePct)} of the deaths shown` : "";
+    points.push(
+      `The ${subjectPhrase(top.label, vk)} accounted for the most deaths — ${fmt(top.deaths)}${share}${rateText(top, per)}.`,
+    );
+
+    if (catDim.top3SharePct !== null && catDim.categoryCount > 3) {
+      const names = ranked.slice(0, 3).map((c) => c.label).join(", ");
+      points.push(
+        `The three largest categories (${names}) together make up ${pct(catDim.top3SharePct)} of the ${fmt(catDim.categoryCount)} shown.`,
+      );
     }
-    const sorted = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
-    const vk = catDim.column.variableKey;
-    if (sorted.length >= 2) {
-      const [topName, topVal] = sorted[0];
-      const pct = total > 0 && !isRate ? `, accounting for ${fmt((topVal / total) * 100, 1)}% of the total shown` : "";
-      const verb = isRate ? "demonstrated the highest" : "recorded the greatest number of";
-      points.push(`The ${subjectPhrase(topName, vk)} ${verb} ${mLabel} (${fmt(topVal, isRate ? 1 : 0)}${pct}).`);
-      const nonZero = sorted.filter(([, v]) => v > 0);
-      if (nonZero.length >= 2) {
-        const [lowName, lowVal] = nonZero[nonZero.length - 1];
-        points.push(`The fewest were observed in the ${subjectPhrase(lowName, vk)} (${fmt(lowVal, isRate ? 1 : 0)}).`);
+
+    // Rates tell a different story from counts more often than not — and that
+    // difference is usually the most useful thing on the screen.
+    if (catDim.countRateDiverges && catDim.highestRate?.rate != null) {
+      const hr = catDim.highestRate;
+      points.push(
+        `Counts and rates point at different groups: the highest death rate belongs to the ${subjectPhrase(hr.label, vk)} at ${fmt(hr.rate, 1)} per ${fmt(per)}, even though that group does not have the largest number of deaths.`,
+      );
+    } else if (catDim.highestRate?.rate != null && catDim.lowestRate?.rate != null && catDim.rateRatio) {
+      points.push(
+        `Death rates span ${fmt(catDim.rateRatio, 1)}-fold across this breakdown, from ${fmt(catDim.highestRate.rate, 1)} per ${fmt(per)} in the ${subjectPhrase(catDim.highestRate.label, vk)} to ${fmt(catDim.lowestRate.rate, 1)} in the ${subjectPhrase(catDim.lowestRate.label, vk)}.`,
+      );
+    }
+
+    // Age-adjusted is the comparison that actually holds when groups have
+    // different age structures, so it gets its own point when available.
+    const hi = catDim.highestAdjusted;
+    const lo = catDim.lowestAdjusted;
+    if (hi?.ageAdjustedRate != null && lo?.ageAdjustedRate != null && catDim.adjustedRatio) {
+      points.push(
+        `Adjusting for age — the fair comparison across groups of different age structure — the ${subjectPhrase(hi.label, vk)} has the highest rate at ${fmt(hi.ageAdjustedRate, 1)} per ${fmt(per)} and the ${subjectPhrase(lo.label, vk)} the lowest at ${fmt(lo.ageAdjustedRate, 1)}, a ${fmt(catDim.adjustedRatio, 1)}-fold difference.`,
+      );
+    }
+  }
+
+  // ---- time ----
+  if (f.time) {
+    const t = f.time;
+    const tr = t.deathsTrend;
+    if (tr && Number.isFinite(tr.totalChangePct)) {
+      const dir = tr.totalChangePct >= 0 ? "rose" : "declined";
+      points.push(
+        `Across the period, deaths ${dir} ${pct(Math.abs(tr.totalChangePct))}, from ${fmt(tr.first)} in ${tr.firstLabel} to ${fmt(tr.last)} in ${tr.lastLabel}.`,
+      );
+    }
+    if (t.rateTrend && Number.isFinite(t.rateTrend.totalChangePct)) {
+      const rt = t.rateTrend;
+      const dir = rt.totalChangePct >= 0 ? "rose" : "fell";
+      points.push(
+        `On a population-adjusted basis the crude rate ${dir} ${pct(Math.abs(rt.totalChangePct))} over the same span, from ${fmt(rt.first, 1)} to ${fmt(rt.last, 1)} per ${fmt(per)}.`,
+      );
+    }
+    if (t.peak && tr && t.peak.label !== tr.lastLabel) {
+      points.push(`The highest figure came in ${t.peak.label}, at ${fmt(t.peak.value)} deaths.`);
+    }
+    if (t.largestStep && Math.abs(t.largestStep.changePct) >= 5) {
+      const s = t.largestStep;
+      points.push(
+        `The largest single-period movement was between ${s.from} and ${s.to}, ${s.changePct >= 0 ? "up" : "down"} ${pct(Math.abs(s.changePct))}.`,
+      );
+    }
+    // Divergent series are the point of a grouped time query.
+    if (t.bySeries.length >= 2) {
+      const sorted = [...t.bySeries].sort((a, b) => b.changePct - a.changePct);
+      const up = sorted[0];
+      const down = sorted[sorted.length - 1];
+      if (Number.isFinite(up.changePct) && Number.isFinite(down.changePct) && up.name !== down.name) {
+        points.push(
+          `Movement was uneven across ${t.seriesDimLabel ?? "categories"}: ${up.name} changed ${pct(up.changePct)} (${fmt(up.first)} → ${fmt(up.last)}) while ${down.name} changed ${pct(down.changePct)} (${fmt(down.first)} → ${fmt(down.last)}).`,
+        );
       }
     }
   }
 
-  // Time trend
-  const timeDim = dims.find((d) => timeKeys.includes(d.column.variableKey ?? ""));
-  if (timeDim) {
-    const byT = new Map<string, number>();
-    for (const r of rows) {
-      const k = cellLabel(r[timeDim.index]);
-      const v = cellNumber(r[mi]);
-      if (v !== null) byT.set(k, (byT.get(k) ?? 0) + v);
-    }
-    const pts = [...byT.entries()]
-      .map(([label, value]) => ({ label, value, ord: numericEncode(timeDim.column.variableKey, label) ?? 0 }))
-      .sort((a, b) => a.ord - b.ord);
-    const tr = trend(pts);
-    if (tr && Number.isFinite(tr.totalChangePct)) {
-      const dir = tr.totalChangePct >= 0 ? "rose" : "declined";
-      points.push(
-        `Over the period examined, ${mLabel} ${dir} ${fmt(Math.abs(tr.totalChangePct), 1)}%, from ${fmt(tr.first, isRate ? 1 : 0)} in ${tr.firstLabel} to ${fmt(tr.last, isRate ? 1 : 0)} in ${tr.lastLabel}${Number.isFinite(tr.cagrPct) ? ` (approximately ${fmt(Math.abs(tr.cagrPct), 1)}% per year)` : ""}.`,
-      );
-      const peak = pts.reduce((a, b) => (b.value > a.value ? b : a));
-      if (peak.label !== tr.lastLabel) points.push(`The highest figure was reached in ${peak.label} (${fmt(peak.value, isRate ? 1 : 0)}).`);
-    }
+  // ---- concentration beyond what the margins predict ----
+  const over = f.interaction?.overRepresented?.[0];
+  if (over && over.ratio >= 1.3) {
+    points.push(
+      `${over.rowLabel} and ${over.colLabel} occur together more often than the overall totals would predict: ${fmt(over.observed)} deaths against ${fmt(over.expected)} expected if the two were unrelated (${fmt(over.ratio, 1)}×).`,
+    );
   }
 
-  if (suppressed > 0) {
-    points.push(`${suppressed} cell${suppressed === 1 ? " was" : "s were"} suppressed by CDC (counts of 1–9) to protect confidentiality and are excluded from these totals; interpret accordingly.`);
+  // ---- caveats ----
+  const q = f.dataQuality;
+  if (q.suppressedCells > 0) {
+    points.push(
+      `${fmt(q.suppressedCells)} cell${q.suppressedCells === 1 ? " was" : "s were"} suppressed by CDC (counts of 1–9) to protect confidentiality and are excluded from these totals; interpret accordingly.`,
+    );
+  }
+  if (q.unreliableCells > 0) {
+    points.push(
+      `${fmt(q.unreliableCells)} rate${q.unreliableCells === 1 ? " is" : "s are"} flagged unreliable by CDC because ${q.unreliableCells === 1 ? "it is" : "they are"} based on fewer than 20 deaths.`,
+    );
   }
 
-  return points.slice(0, 6);
+  return points.slice(0, 9);
 }

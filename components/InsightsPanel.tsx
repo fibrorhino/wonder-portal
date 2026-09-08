@@ -1,15 +1,27 @@
 "use client";
 
-// "Talking points" for the current result. The bullets are computed
-// deterministically from the table (lib/insights.ts) so every number is exact;
-// the optional "Enhance with AI" pass only rewrites them for tone and clarity
-// via /api/insights (Gemini), and can be reverted.
+// Talking points for the current result.
+//
+// Two tiers, both built on the same deterministic fact sheet:
+//   - the default bullets are computed in the browser (lib/insights.ts), so
+//     every figure is exact and they appear instantly;
+//   - "Analyze with AI" asks /api/insights for a written read of the same
+//     figures. That route verifies every number the model returns against the
+//     fact sheet before responding, so the analysis can add judgement about
+//     what matters without being able to add a statistic.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
 import { talkingPoints } from "@/lib/insights";
-import { describeFilters, describeGrouping } from "@/lib/describeSpec";
 import { safeJson } from "@/lib/safeJson";
+
+interface Analysis {
+  headline: string;
+  bullets: string[];
+  caveats: string[];
+  dropped: number;
+  fellBack: boolean;
+}
 
 export default function InsightsPanel({
   table,
@@ -18,70 +30,93 @@ export default function InsightsPanel({
   table: ResultTable;
   spec?: QuerySpec;
 }) {
-  const basePoints = useMemo(() => talkingPoints(table), [table]);
-  const [aiEnabled, setAiEnabled] = useState(false);
+  const basePoints = useMemo(() => talkingPoints(table, spec), [table, spec]);
   const [loading, setLoading] = useState(false);
-  // An AI rewrite (or an error from one) belongs to the specific table it was
+  const [copied, setCopied] = useState(false);
+  // An AI analysis (or an error from one) belongs to the specific table it was
   // produced from. Tagging it with that table lets a new result invalidate it
   // during render, instead of via an effect that fires a second render pass.
-  const [ai, setAi] = useState<{ table: ResultTable; points: string[] } | null>(null);
+  const [ai, setAi] = useState<{ table: ResultTable; analysis: Analysis } | null>(null);
   const [errorState, setErrorState] = useState<{ table: ResultTable; message: string } | null>(null);
-  const aiPoints = ai?.table === table ? ai.points : null;
+  const analysis = ai?.table === table ? ai.analysis : null;
   const error = errorState?.table === table ? errorState.message : null;
-  const setError = (message: string) => setErrorState({ table, message });
 
-  useEffect(() => {
-    fetch("/api/insights")
-      .then((r) => r.json())
-      .then((d) => setAiEnabled(Boolean(d.enabled)))
-      .catch(() => setAiEnabled(false));
-  }, []);
-
-  const enhance = async () => {
+  const analyze = async () => {
     setLoading(true);
     setErrorState(null);
     try {
-      const context = spec
-        ? `${describeGrouping(spec)} — ${describeFilters(spec)}`
-        : "";
       const res = await fetch("/api/insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ points: basePoints, context }),
+        body: JSON.stringify({ table, spec }),
       });
-      const parsed = await safeJson<{ ok: boolean; points?: string[]; error?: string }>(res);
+      const parsed = await safeJson<{ ok: boolean; error?: string } & Partial<Analysis>>(res);
       if (!parsed.ok) {
-        setError(parsed.error);
+        setErrorState({ table, message: parsed.error });
         return;
       }
       if (!parsed.data.ok) {
-        setError(parsed.data.error ?? "Could not enhance the talking points.");
+        setErrorState({
+          table,
+          message: parsed.data.error ?? "Could not analyze this result.",
+        });
         return;
       }
-      const points = parsed.data.points ?? null;
-      setAi(points ? { table, points } : null);
+      setAi({
+        table,
+        analysis: {
+          headline: parsed.data.headline ?? "",
+          bullets: parsed.data.bullets ?? [],
+          caveats: parsed.data.caveats ?? [],
+          dropped: parsed.data.dropped ?? 0,
+          fellBack: Boolean(parsed.data.fellBack),
+        },
+      });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error.");
+      setErrorState({ table, message: e instanceof Error ? e.message : "Network error." });
     } finally {
       setLoading(false);
     }
   };
 
-  const points = aiPoints ?? basePoints;
+  const points = analysis && !analysis.fellBack ? analysis.bullets : basePoints;
+  const isAi = Boolean(analysis && !analysis.fellBack);
+
+  const copy = async () => {
+    const lines = [
+      ...(analysis?.headline ? [analysis.headline, ""] : []),
+      ...points.map((p) => `• ${p}`),
+      ...(analysis?.caveats?.length ? ["", ...analysis.caveats.map((c) => `Note: ${c}`)] : []),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard blocked — nothing useful to do */
+    }
+  };
 
   return (
     <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-800">
           Talking points
-          {aiPoints && (
+          {isAi && (
             <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700">
-              AI-polished
+              AI analysis · figures verified
             </span>
           )}
         </h3>
         <div className="flex items-center gap-2">
-          {aiPoints && (
+          <button
+            type="button"
+            onClick={copy}
+            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white"
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+          {analysis && (
             <button
               type="button"
               onClick={() => setAi(null)}
@@ -92,33 +127,48 @@ export default function InsightsPanel({
           )}
           <button
             type="button"
-            onClick={enhance}
-            disabled={!aiEnabled || loading}
-            title={
-              aiEnabled
-                ? "Rewrite these for tone and clarity (numbers are preserved exactly)"
-                : "Set GEMINI_API_KEY to enable AI-polished talking points"
-            }
-            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={analyze}
+            disabled={loading}
+            title="Have AI read this table and write up what stands out. Every figure it returns is checked against the data first."
+            className="rounded-lg border border-violet-300 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "Polishing…" : `✨ Enhance with AI${aiEnabled ? "" : " (needs API key)"}`}
+            {loading ? "Analyzing…" : analysis ? "✨ Re-analyze" : "✨ Analyze with AI"}
           </button>
         </div>
       </div>
 
-      {error && (
-        <p className="mb-2 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
+      {error && <p className="mb-2 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
+
+      {analysis?.headline && (
+        <p className="mb-3 border-l-2 border-violet-300 pl-3 text-sm font-medium text-slate-800">
+          {analysis.headline}
+        </p>
       )}
 
-      <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
+      <ul className="list-disc space-y-1.5 pl-5 text-sm text-slate-700">
         {points.map((p, i) => (
           <li key={i}>{p}</li>
         ))}
       </ul>
-      <p className="mt-2 text-xs text-slate-400">
-        {aiPoints
-          ? "Rewritten by AI from the computed figures; numbers are unchanged. Verify against the table before quoting."
-          : "Auto-generated from the data. Verify against the table before quoting."}
+
+      {analysis?.caveats && analysis.caveats.length > 0 && (
+        <ul className="mt-3 space-y-1 border-t border-slate-200 pt-2 text-xs text-slate-600">
+          {analysis.caveats.map((c, i) => (
+            <li key={i}>⚠ {c}</li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-3 text-xs text-slate-400">
+        {isAi
+          ? `Written by AI from figures computed directly from this table; every number was checked against the data before display${
+              analysis && analysis.dropped > 0
+                ? `, and ${analysis.dropped} statement${analysis.dropped === 1 ? "" : "s"} that cited an unverifiable figure ${analysis.dropped === 1 ? "was" : "were"} removed`
+                : ""
+            }. Verify against the table before quoting.`
+          : analysis?.fellBack
+            ? "The AI analysis could not be verified against the data, so the computed talking points are shown instead."
+            : "Computed directly from the data. Verify against the table before quoting."}
       </p>
     </div>
   );

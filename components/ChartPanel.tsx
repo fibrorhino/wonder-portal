@@ -8,7 +8,7 @@
 import { useMemo, useRef, useState } from "react";
 import Plot, { type PlotHandle } from "./Plot";
 import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
-import { describeFilters } from "@/lib/describeSpec";
+import { figureCaption } from "@/lib/describeSpec";
 import {
   cellLabel,
   cellNumber,
@@ -86,9 +86,11 @@ export default function ChartPanel({
   const [legendPos, setLegendPos] = useState<"top" | "right" | "bottom">("bottom");
   const [showFilters, setShowFilters] = useState(true);
 
-  // Caption describing the active filters, drawn onto the figure so exported
-  // images/slides remain self-explanatory.
-  const filterCaption = spec ? describeFilters(spec) : "";
+  // Caption drawn onto the figure so exported images/slides remain
+  // self-explanatory: grouping, filters, and the data-source citation.
+  const captionLines = useMemo(() => (spec ? figureCaption(spec) : []), [spec]);
+  // Single-line form, kept for the PPTX exporter's older `filterCaption` field.
+  const filterCaption = captionLines.join(" — ");
 
   const xCol = table.columns[xIdx];
   const yCol = table.columns[measureIdx];
@@ -298,7 +300,7 @@ export default function ChartPanel({
   const layout = useMemo(() => {
     // Filter caption pinned below the plot so it is included in PNG/SVG exports.
     const captionAnno =
-      showFilters && filterCaption
+      showFilters && captionLines.length
         ? [
             {
               xref: "paper",
@@ -309,7 +311,7 @@ export default function ChartPanel({
               yanchor: "top",
               showarrow: false,
               align: "left",
-              text: `<i>${filterCaption}</i>`,
+              text: captionLines.map((l) => `<i>${l}</i>`).join("<br>"),
               font: { size: 10, color: "#64748b" },
             },
           ]
@@ -318,7 +320,13 @@ export default function ChartPanel({
       title: { text: title || undefined, font: { size: 16 } },
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
-      margin: { t: 50, r: 20, b: showFilters && filterCaption ? 110 : 60, l: 70 },
+      // Room for however many caption lines are drawn under the plot.
+      margin: {
+        t: 50,
+        r: 20,
+        b: showFilters && captionLines.length ? 78 + captionLines.length * 16 : 60,
+        l: 70,
+      },
       legend,
       annotations: [...annotations, ...captionAnno],
       colorway: PALETTES[palette],
@@ -345,7 +353,7 @@ export default function ChartPanel({
       xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
       yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
     };
-  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, legendPos, annotations, palette, table.columns, showFilters, filterCaption]);
+  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, legendPos, annotations, palette, table.columns, showFilters, captionLines]);
 
   if (measures.length === 0 || dims.length === 0) {
     return <p className="text-sm text-slate-500">No chartable data.</p>;
@@ -419,8 +427,8 @@ export default function ChartPanel({
       {/* toggles */}
       <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-slate-700">
         <Toggle label="Data labels" checked={dataLabels} onChange={setDataLabels} />
-        {filterCaption && (
-          <Toggle label="Show filters on figure" checked={showFilters} onChange={setShowFilters} />
+        {captionLines.length > 0 && (
+          <Toggle label="Caption + source on figure" checked={showFilters} onChange={setShowFilters} />
         )}
         {!isPie && <Toggle label="Log Y axis" checked={logY} onChange={setLogY} />}
         {(chartType === "line" || chartType === "area") && <Toggle label="Smooth" checked={smooth} onChange={setSmooth} />}
@@ -449,7 +457,7 @@ export default function ChartPanel({
             const png = await plotRef.current?.toImage().catch(() => null);
             await exportPptx(
               table,
-              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption },
+              { chartType, xIdx, seriesIdx, measureIdx, title, measureLabel: yCol?.label ?? "Value", filterCaption, captionLines },
               png ?? null,
             );
           }}

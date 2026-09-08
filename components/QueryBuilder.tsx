@@ -18,6 +18,7 @@ import {
   VARIABLE_BY_KEY,
 } from "@/lib/wonder/databases";
 import MultiSelect from "./MultiSelect";
+import { DataUseFootnote, DataUseMark } from "./DataUseNotice";
 import PillSelect from "./PillSelect";
 
 const CAUSE_KEYS = ["ucdCause", "injuryIntent", "injuryMechanism", "leadingCauses"];
@@ -371,14 +372,17 @@ export default function QueryBuilder({
         </div>
       </section>
 
-      <button
-        type="button"
-        onClick={onRun}
-        disabled={loading || spec.groupBy.length === 0}
-        className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-      >
-        {loading ? "Querying CDC WONDER…" : "Run query"}
-      </button>
+      <div>
+        <button
+          type="button"
+          onClick={onRun}
+          disabled={loading || spec.groupBy.length === 0}
+          className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+        >
+          {loading ? "Querying CDC WONDER…" : <>Run query<DataUseMark /></>}
+        </button>
+        <DataUseFootnote className="mt-1.5" />
+      </div>
     </div>
   );
 }

@@ -1,10 +1,18 @@
 # Wonderwall
 
-A friendlier front-end for **CDC WONDER** — query the *Underlying Cause of
-Death, 2018–2024, Single Race* database (API id `D158`), inspect the data as a
-table/spreadsheet, build **customizable figures**, and run **basic statistics**
-(regression + r², chi-square, correlation) — things the official WONDER portal
-can't do.
+The **Mortality Data Portal** — a friendlier front-end for CDC WONDER data.
+Query the *Underlying Cause of Death, 2018–2024, Single Race* database (API id
+`D158`), inspect the data as a table/spreadsheet, build **customizable
+figures**, run **basic statistics** (regression + r², chi-square, correlation),
+and get a written **analysis of what is actually in the result** — things the
+official WONDER portal can't do.
+
+> **Naming.** The site is called the *Mortality Data Portal*, not a "WONDER
+> portal": it is an independent tool and must not read as a CDC property. CDC
+> WONDER is credited as the **data source** (subtitle, footer) and its Data Use
+> Restrictions are linked from every control that runs a query — the `Ask` and
+> `Run query` buttons carry an asterisk to that notice, mirroring the agreement
+> the official portal makes you accept. Keep it that way.
 
 A natural-language query box translates plain-English requests into queries
 using the free-tier **Gemini API** — see [Enabling the natural-language
@@ -32,9 +40,30 @@ npm run dev
 Open http://localhost:3000. **No API key or account needed** for the core app.
 
 ### Try it
-1. Click the **Suicide (intent)** cause preset.
-2. Under **Group results by**, keep *Year* and add *Injury Mechanism (Method)*.
-3. Click **Run query** → see the table, then open the **Chart** and **Stats** tabs.
+Click one of the **example queries** above the builder (e.g. *Suicide by sex and
+race*) — each is a complete, runnable query. Then open the **Chart** and
+**Stats** tabs, and press **✨ Analyze with AI** under the results.
+
+- **🔗 Copy link** — every run puts the query in the URL fragment, so this gives
+  a link that reopens *and re-runs* that exact query. Pasting one into a tab
+  that already has the app open works too (the app listens for `hashchange`;
+  its own navigation uses `replaceState`, which does not fire it).
+- **📌 Pin to compare** — parks a result as *A*; run another query and a
+  **Compare** tab appears diffing B against A. Rows are matched on their
+  dimension-label tuple, so it only aligns when both queries grouped the same
+  way; otherwise it compares totals and says why. Rates are never totalled.
+- **Recent queries** — the last ten specs, in `localStorage` only. A spec can
+  describe a narrow demographic slice and there is no reason for it to reach
+  the server.
+
+### Measures shown by default
+
+Deaths, Population, Crude Rate **and Age-Adjusted Rate**. Age-adjustment is the
+default because crude rates are not comparable across groups with different age
+structures, which is most of the interesting comparisons; WONDER drops the
+measure automatically when a query groups by age, where it has no meaning.
+Population is requested because it is the denominator the insights engine needs
+to rebuild marginal rates.
 
 ---
 
@@ -98,6 +127,51 @@ The whole app is built around one typed contract — `QuerySpec`
 (`lib/wonder/types.ts`) — which both the manual builder and the AI box
 produce, so swapping the LLM provider later only touches `app/api/nl/route.ts`.
 
+> Google retires Gemini model ids without notice (`gemini-2.5-flash` started
+> returning 404 to new callers mid-2026). `app/api/insights/route.ts` therefore
+> holds an ordered list of model ids and falls through to the next one on a 404
+> rather than losing the feature.
+
+## Talking points and the AI analysis
+
+Under every result is a **Talking points** panel. It has two tiers, and both are
+built on the same deterministic fact sheet:
+
+1. **Computed bullets** (`lib/analysis/facts.ts` → `lib/insights.ts`) appear
+   immediately, with no model involved. The fact sheet goes well past
+   "biggest / smallest": marginal rates, category shares, per-series trends,
+   count-vs-rate divergence, and observed-vs-expected cell ratios.
+2. **✨ Analyze with AI** (`app/api/insights/route.ts`) sends that fact sheet —
+   never a bare table — to Gemini, which decides what is worth saying and writes
+   it up.
+
+**The model never supplies a statistic.** Every number it writes back is checked
+against the fact sheet by `lib/analysis/verify.ts` before the response leaves
+the server: a figure must appear in the fact sheet, or be a ratio / difference /
+percent change between two figures that do. A statement citing anything else is
+dropped, the count of dropped statements is reported to the user, and the
+dropped text is logged server-side so a bad prompt is visible. If nothing
+survives, the computed bullets are returned instead.
+
+### Age-adjusted rates in the fact sheet
+
+An age-adjusted rate is a weighted sum over a standard age distribution, so —
+unlike deaths — it cannot be re-derived by adding rows together. The fact sheet
+therefore records one only when a category maps to exactly one row, and offers
+the highest/lowest age-adjusted comparison only when *every* category has one.
+The prompt tells the model to prefer that comparison over crude rates and to say
+"age-adjusted" when it does.
+
+### A note on population as a denominator
+
+Population is a denominator, not a count, so `lib/analysis/facts.ts` only sums
+it across dimensions that actually *split* the population (sex, age, race,
+Hispanic origin — and year, where the sum is person-years, which is exactly what
+a multi-year crude rate needs). Grouping by injury mechanism repeats the same
+population on every row, so collapsing that dimension would inflate the
+denominator by the number of mechanisms; in that case the rate is withheld
+rather than computed wrongly. `lib/analysis/facts.test.ts` pins this down.
+
 ---
 
 ## How it works
@@ -106,13 +180,21 @@ produce, so swapping the LLM provider later only touches `app/api/nl/route.ts`.
 app/
   page.tsx                 app shell (query builder | table | chart | stats tabs)
   api/wonder/route.ts      POST QuerySpec -> request_xml -> CDC WONDER -> ResultTable
-  api/nl/route.ts          stub seam for the future LLM interpreter
-components/                QueryBuilder, ResultsTable, ChartPanel, StatsPanel, ...
+  api/nl/route.ts          POST text -> QuerySpec via Gemini, re-validated server-side
+  api/insights/route.ts    POST table -> fact sheet -> Gemini -> verified analysis
+components/                QueryBuilder, ResultsTable, ChartPanel, StatsPanel,
+                           ExampleQueries, RecentQueries, ComparePanel,
+                           DataUseNotice, InsightsPanel, ...
 lib/
   wonder/                  types, database registry, request builder, XML parser
     data/d158_variables.json   verified D158 variable + value-code metadata
+    examples.ts            one-click starting queries
+  analysis/                fact sheet (facts.ts), numeric verification (verify.ts),
+                           two-query diff (compare.ts)
   stats/                   regression (r², p), correlation (Pearson/Spearman, chi-square)
   export/                  CSV + XLSX
+  shareLink.ts             QuerySpec <-> URL fragment
+  queryHistory.ts          recent queries (localStorage only)
   tableUtils.ts, cache.ts
 ```
 
@@ -122,11 +204,33 @@ lib/
 npm test
 ```
 
-Compiles the pure-computation modules (`lib/stats`, `lib/wonder`) and runs them
+Compiles the pure-computation modules (`lib/stats`, `lib/wonder`,
+`lib/analysis`) and runs them
 under Node's built-in test runner — no test framework dependency. Covers the
 distribution functions against published t / chi-square / F values, the
-regression and ANOVA degenerate cases, and the WONDER XML parser's row/column
-alignment. Run it after touching anything under `lib/`.
+regression and ANOVA degenerate cases, the WONDER XML parser's row/column
+alignment, the fact sheet's rate/denominator rules, the numeric verifier, and
+the two-query comparison.
+Run it after touching anything under `lib/`.
+
+> Test modules are compiled to CommonJS without the `@/` path alias, so anything
+> under `lib/` that the tests reach must use **relative** imports.
+
+## Layout
+
+The page is a two-column grid at `lg` and up (builder | results) and a single
+column below it. On narrow screens the query builder is collapsible and folds
+itself away once a result arrives, because the two cannot both be on screen.
+The example and recent-query rows scroll horizontally rather than wrapping into
+several rows. Wide content — tables, the comparison grid — scrolls inside its
+own container; the page body never scrolls sideways.
+
+## Development on the always-on host
+
+`next dev` writes to **`.next-dev`**, not `.next` (see `next.config.ts`). The
+production `.next` is being served by the `WonderPortal` service on the same
+machine, and sharing one build directory let dev overwrite manifests the running
+service reads — every API route started returning 404. Don't remove that split.
 
 ### Data notes / caveats
 - **National data only.** WONDER's API blocks sub-national (state/county)
@@ -142,7 +246,9 @@ alignment. Run it after touching anything under `lib/`.
   injury intent/mechanism *or* leading causes — not a mix. The app enforces this.
 - Always sanity-check numbers against the CDC portal before relying on them.
 
-Not affiliated with or endorsed by the CDC. Data © CDC/NCHS via CDC WONDER.
+Not affiliated with, operated by, or endorsed by the CDC. Data © CDC/NCHS via
+CDC WONDER, used under the [CDC WONDER Data Use
+Restrictions](https://wonder.cdc.gov/datause.html).
 
 ### A note on the `xlsx` dependency
 The `xlsx` (SheetJS) package carries an advisory about parsing malicious files.

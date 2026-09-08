@@ -3,7 +3,7 @@
 // from the app).
 
 import type { QuerySpec } from "./wonder/types";
-import { MANNER_OF_DEATH, VARIABLE_BY_KEY } from "./wonder/databases";
+import { DATABASE_LABEL, MANNER_OF_DEATH, VARIABLE_BY_KEY } from "./wonder/databases";
 
 /** Collapse a sorted year list into ranges: 2019,2020,2021,2024 -> "2019–2021, 2024". */
 function summarizeYears(codes: string[]): string {
@@ -72,4 +72,20 @@ export function describeGrouping(spec: QuerySpec): string {
   const last = groups[groups.length - 1];
   const head = groups.slice(0, -1);
   return head.length ? `${head.join(", ")} and ${last}` : last;
+}
+
+/**
+ * The lines drawn under an exported figure so it stands on its own once it has
+ * left the app: what is plotted, what was filtered, and where the data came
+ * from. A chart on a slide with no source line is not citable.
+ */
+export function figureCaption(spec: QuerySpec): string[] {
+  const lines: string[] = [];
+  const grouping = describeGrouping(spec);
+  if (grouping) lines.push(`Grouped by ${grouping}`);
+  lines.push(describeFilters(spec));
+  lines.push(
+    `Source: CDC/NCHS, ${DATABASE_LABEL}, via CDC WONDER (national data). Rates per 100,000.`,
+  );
+  return lines;
 }
