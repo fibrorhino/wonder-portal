@@ -13,11 +13,13 @@
 // supplies a statistic. If the key is missing, or the model is unavailable, the
 // client still has the deterministic bullets from lib/insights.ts.
 
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
 import { buildFactSheet, keyFigures, renderFactSheet } from "@/lib/analysis/facts";
 import { buildAllowSet, verifyStatements } from "@/lib/analysis/verify";
 import { pointsFromFacts } from "@/lib/insights";
+import { createCache } from "@/lib/cache";
 
 export const runtime = "nodejs";
 
@@ -26,7 +28,19 @@ export const runtime = "nodejs";
 // with a 404), so a retirement now falls through to the next id instead of
 // taking the feature down. Pinned ids rather than a floating alias, so the
 // behaviour only changes when this list does.
-const GEMINI_MODELS = ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash-lite"];
+//
+// Flash-Lite leads: this site is public and runs on the free tier, and the
+// model is not doing the arithmetic — every figure is supplied by the fact
+// sheet and checked afterwards — so the cheaper model with the higher quota is
+// the right default. GEMINI_MODEL overrides it without a code change.
+const DEFAULT_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-3.6-flash",
+];
+const GEMINI_MODELS = process.env.GEMINI_MODEL
+  ? [process.env.GEMINI_MODEL, ...DEFAULT_MODELS.filter((m) => m !== process.env.GEMINI_MODEL)]
+  : DEFAULT_MODELS;
 const modelUrl = (model: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
@@ -42,6 +56,25 @@ const RESPONSE_SCHEMA = {
 
 // The site is public and this endpoint spends the deployment's Gemini quota.
 const MAX_ROWS = 2000;
+
+// Analyses are cached on the fact sheet, which is the model's entire input:
+// identical input means an identical answer, so ten people opening the same
+// shared link cost one API call rather than ten. Keying on the fact sheet
+// rather than the spec also collapses different specs that happen to produce
+// the same figures. A day, because the underlying data is annual vintages.
+const analysisCache = createCache<AnalysisResult>({
+  ttlMs: 1000 * 60 * 60 * 24,
+  maxEntries: 300,
+});
+
+interface AnalysisResult {
+  headline: string;
+  bullets: string[];
+  caveats: string[];
+  dropped: number;
+  fellBack: boolean;
+  model: string;
+}
 
 export async function GET() {
   return NextResponse.json({ enabled: Boolean(process.env.GEMINI_API_KEY) });
@@ -69,6 +102,10 @@ Write:
    - Anything genuinely surprising given the rest of the table.
    Every bullet must cite at least one exact figure. Say what the number is, then what it means for the reader.
 
+   Do NOT simply walk the table. A bullet that reports one category's figures and stops is a wasted bullet — the reader can already see the table. Each one should carry a comparison, a share, a ratio, a direction of change, or a contrast between two things. If you cannot say why a number matters, leave it out.
+
+   Never write about a category with zero deaths, an empty population, or a label like "Not Available", "Not Stated" or "Unknown" — not in a bullet, not in a caveat, not in the headline. Those are placeholders in the coding scheme, not findings.
+
 3. "caveats" — 0 to 2 short notes, only where a caveat materially changes how the numbers should be read (suppressed cells hiding deaths from a total, unreliable rates, or a comparison resting on crude rates because no age-adjusted figure was available). Do NOT raise the age-adjustment caveat when the fact sheet supplied age-adjusted rates and you used them. Skip this section entirely if there is nothing important to flag.
 
 Hard rules:
@@ -80,7 +117,8 @@ Hard rules:
 - These are real deaths, often by suicide. Use plain, respectful, person-first language. No "spike", "alarming", "epidemic", "surge", "skyrocketed", or any word that editorialises. State magnitudes numerically instead.
 - Do not recommend interventions or policy.
 - Refer to categories exactly as the fact sheet names them.
-- Plain prose in each string. No markdown, no leading bullet characters, no numbering.`;
+- Plain prose in each string. No markdown, no leading bullet characters, no numbering.
+- Return at most 6 bullets. Fewer, sharper bullets are better than a complete inventory.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -107,6 +145,14 @@ export async function POST(req: NextRequest) {
 
   const facts = buildFactSheet(table, spec);
   const factSheet = renderFactSheet(facts);
+
+  // The prompt is a pure function of the fact sheet, so the fact sheet is the
+  // cache key. Hashed rather than stored whole: these run to ~11 KB.
+  const cacheKey = createHash("sha256").update(factSheet).digest("hex");
+  const hit = analysisCache.get(cacheKey);
+  if (hit) {
+    return NextResponse.json({ ok: true, ...hit, cached: true });
+  }
 
   if (!key) {
     return NextResponse.json(
@@ -199,7 +245,9 @@ export async function POST(req: NextRequest) {
       Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : [];
 
     const headline = typeof parsed.headline === "string" ? parsed.headline.trim() : "";
-    const bullets = asStrings(parsed.bullets);
+    // The response schema cannot express a maximum length, and the smaller
+    // models in particular will happily enumerate every row.
+    const bullets = asStrings(parsed.bullets).slice(0, 6);
     const caveats = asStrings(parsed.caveats);
 
     // Every figure the model wrote must be accountable to the fact sheet.
@@ -221,28 +269,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (bulletCheck.kept.length === 0) {
-      // Nothing survived — fall back rather than show an empty panel.
-      return NextResponse.json({
-        ok: true,
-        headline: "",
-        bullets: pointsFromFacts(facts),
-        caveats: [],
-        dropped,
-        fellBack: true,
-        model,
-      });
-    }
+    const result: AnalysisResult =
+      bulletCheck.kept.length === 0
+        ? {
+            // Nothing survived verification — fall back rather than show an
+            // empty panel. Cached too: the same fact sheet would fail the same
+            // way, and retrying would just spend another call to find out.
+            headline: "",
+            bullets: pointsFromFacts(facts),
+            caveats: [],
+            dropped,
+            fellBack: true,
+            model,
+          }
+        : {
+            headline: headlineCheck.kept[0] ?? "",
+            bullets: bulletCheck.kept,
+            caveats: caveatCheck.kept,
+            dropped,
+            fellBack: false,
+            model,
+          };
 
-    return NextResponse.json({
-      ok: true,
-      headline: headlineCheck.kept[0] ?? "",
-      bullets: bulletCheck.kept,
-      caveats: caveatCheck.kept,
-      dropped,
-      fellBack: false,
-      model,
-    });
+    analysisCache.set(cacheKey, result);
+    return NextResponse.json({ ok: true, ...result, cached: false });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ ok: false, error: `Could not reach Gemini: ${msg}` }, { status: 502 });

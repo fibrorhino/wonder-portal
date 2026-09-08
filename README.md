@@ -130,7 +130,25 @@ produce, so swapping the LLM provider later only touches `app/api/nl/route.ts`.
 > Google retires Gemini model ids without notice (`gemini-2.5-flash` started
 > returning 404 to new callers mid-2026). `app/api/insights/route.ts` therefore
 > holds an ordered list of model ids and falls through to the next one on a 404
-> rather than losing the feature.
+> rather than losing the feature. Set `GEMINI_MODEL` to prefer a different one
+> without touching the code.
+
+### Cost and quota
+
+The analysis runs on **Flash-Lite** by default. The model is not doing the
+arithmetic — every figure is supplied by the fact sheet and checked afterwards —
+so the cheaper model with the higher free-tier quota is the right default, and
+it answers in ~2 s rather than ~15 s.
+
+Analyses are **cached for 24 hours on a hash of the fact sheet**, which is the
+model's entire input. Identical input means an identical answer, so ten people
+opening the same shared link cost one API call, not ten. The WONDER response
+cache and this one are separate stores so a burst of one cannot evict the other.
+
+At paid rates (~$0.30/M in, $2.50/M out) one analysis is about **$0.002**:
+100 people running three each is well under a dollar. On the free tier, a 429
+is surfaced as a plain "rate-limited, try again shortly" message and the
+computed talking points — which need no API at all — carry on regardless.
 
 ## Talking points and the AI analysis
 

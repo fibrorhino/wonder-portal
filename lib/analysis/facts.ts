@@ -258,8 +258,17 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       };
     });
 
-    const byDeaths = [...cats].sort((a, b) => (b.deaths ?? -1) - (a.deaths ?? -1));
-    const withRate = cats.filter((c) => c.rate !== null && Number.isFinite(c.rate));
+    // WONDER emits placeholder rows — "Not Available", "Not Stated" — carrying
+    // no deaths AND no population. They are an artefact of the coding scheme,
+    // not a category anyone can say anything about, and left in the fact sheet
+    // the model dutifully writes a bullet reporting that they are empty. A
+    // category with zero deaths but a real population is a genuine finding and
+    // is kept; so is a suppressed one, whose deaths are null but population is not.
+    const informative = cats.filter(
+      (c) => !((c.deaths === null || c.deaths === 0) && (c.population === null || c.population === 0)),
+    );
+    const byDeaths = [...informative].sort((a, b) => (b.deaths ?? -1) - (a.deaths ?? -1));
+    const withRate = informative.filter((c) => c.rate !== null && Number.isFinite(c.rate));
     const byRate = [...withRate].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0));
     const highestRate = byRate[0];
     const lowestRate = byRate.length > 1 ? byRate[byRate.length - 1] : undefined;
@@ -268,11 +277,11 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
 
     // Age-adjusted comparison only when every category has one, so the
     // highest/lowest pair is drawn from the same measure throughout.
-    const adjusted = cats.filter(
+    const adjusted = informative.filter(
       (c) => c.ageAdjustedRate !== null && Number.isFinite(c.ageAdjustedRate),
     );
     const byAdjusted =
-      adjusted.length === cats.length && adjusted.length > 1
+      adjusted.length === informative.length && adjusted.length > 1
         ? [...adjusted].sort((a, b) => (b.ageAdjustedRate ?? 0) - (a.ageAdjustedRate ?? 0))
         : [];
     const highestAdjusted = byAdjusted[0];
@@ -282,10 +291,10 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       variableKey: key,
       label: d.column.label,
       isTime,
-      categoryCount: cats.length,
+      categoryCount: informative.length,
       // Time dimensions read better in chronological order.
       categories: (isTime
-        ? [...cats].sort(
+        ? [...informative].sort(
             (a, b) =>
               (numericEncode(key, a.label) ?? 0) - (numericEncode(key, b.label) ?? 0),
           )
@@ -293,7 +302,7 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       ).slice(0, MAX_CATEGORIES),
       ratesValid: ratesValid || dims.length === 1,
       topSharePct: byDeaths[0]?.sharePct ?? null,
-      top3SharePct: cats.length > 3 ? top3 : null,
+      top3SharePct: informative.length > 3 ? top3 : null,
       highestRate,
       lowestRate,
       rateRatio:

@@ -291,3 +291,35 @@ test("age-adjusted rates are taken per row and only when unambiguous", () => {
   assert.equal(raceDim?.categories[0].ageAdjustedRate, null);
   assert.equal(raceDim?.adjustedRatio, null);
 });
+
+test("empty placeholder categories are excluded, real zeros are kept", () => {
+  const table = makeTable([{ key: "race6", label: "Race" }], ["deaths", "population"], [
+    [s("White"), n(1000), n(100_000)],
+    [s("Asian"), n(0), n(50_000)],       // genuinely zero deaths — a real finding
+    [s("Not Available"), n(0), n(0)],    // WONDER placeholder — no information
+  ]);
+  const f = buildFactSheet(table, spec(["race6"]));
+  const labels = f.dimensions[0].categories.map((c) => c.label);
+  assert.ok(labels.includes("White"));
+  assert.ok(labels.includes("Asian"), "a real zero-death category is a finding");
+  assert.ok(!labels.includes("Not Available"), "0 deaths AND 0 population is a placeholder");
+  assert.equal(f.dimensions[0].categoryCount, 2);
+
+  // It must not appear as a CATEGORY the model could write about. It does stay
+  // in the verbatim DATA TABLE section, deliberately: that section is the rows
+  // as returned, and the numeric verifier builds its allow-set from it.
+  const sheet = renderFactSheet(f);
+  const breakdown = sheet.slice(0, sheet.indexOf("DATA TABLE"));
+  assert.ok(!breakdown.includes("Not Available"), "placeholder must not be listed as a category");
+  assert.ok(sheet.includes("Not Available"), "raw rows stay verbatim");
+});
+
+test("a suppressed category is kept, since its deaths are hidden not absent", () => {
+  const table = makeTable([{ key: "race6", label: "Race" }], ["deaths", "population"], [
+    [s("White"), n(1000), n(100_000)],
+    [s("Native Hawaiian or Other Pacific Islander"), suppressed(), n(20_000)],
+  ]);
+  const f = buildFactSheet(table, spec(["race6"]));
+  const labels = f.dimensions[0].categories.map((c) => c.label);
+  assert.ok(labels.includes("Native Hawaiian or Other Pacific Islander"));
+});
