@@ -306,37 +306,45 @@ export default function ChartPanel({
   }, [legendPos]);
 
   const layout = useMemo(() => {
-    // Filter caption pinned below the plot so it is included in PNG/SVG exports.
-    const captionAnno =
-      showFilters && captionLines.length
-        ? [
-            {
-              xref: "paper",
-              yref: "paper",
-              x: 0,
-              y: legendPos === "bottom" ? -0.3 : -0.16,
-              xanchor: "left",
-              yanchor: "top",
-              showarrow: false,
-              align: "left",
-              text: captionLines.map((l) => `<i>${l}</i>`).join("<br>"),
-              font: { size: 10, color: "#64748b" },
-            },
-          ]
-        : [];
+    // The caption rides in the title block, not as an annotation below the plot.
+    //
+    // It used to be a paper-coordinate annotation at a fixed offset, which
+    // assumed a one-row legend: a chart with a dozen series has a legend many
+    // rows tall that grows downward and swallowed the caption. Paper offsets
+    // are also a fraction of plot height, which differs between the 460px
+    // on-screen plot and the 600px export, so the same offset landed in two
+    // different places. Plotly lays the title block out itself, above
+    // everything and clear of any legend, in both.
+    const showCaption = showFilters && captionLines.length > 0;
     const base: Record<string, unknown> = {
-      title: { text: title || undefined, font: { size: 16 } },
+      title: {
+        text: title || " ",
+        font: { size: 16 },
+        // Left-aligned: a multi-line source note centred under a centred title
+        // reads as a paragraph floating over the figure.
+        x: 0,
+        xanchor: "left",
+        xref: "paper",
+        ...(showCaption
+          ? {
+              subtitle: {
+                text: captionLines.map((l) => `<i>${l}</i>`).join("<br>"),
+                font: { size: 10, color: "#64748b" },
+              },
+            }
+          : {}),
+      },
       paper_bgcolor: "#ffffff",
       plot_bgcolor: "#ffffff",
-      // Room for however many caption lines are drawn under the plot.
+      // Room at the top for the title plus however many caption lines.
       margin: {
-        t: 50,
+        t: showCaption ? 46 + captionLines.length * 15 : 50,
         r: 20,
-        b: showFilters && captionLines.length ? 78 + captionLines.length * 16 : 60,
+        b: 60,
         l: 70,
       },
       legend,
-      annotations: [...annotations, ...captionAnno],
+      annotations,
       colorway: PALETTES[palette],
     };
     // 3D scatter uses a `scene` (not cartesian x/y axes).
@@ -361,7 +369,7 @@ export default function ChartPanel({
       xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
       yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
     };
-  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, legendPos, annotations, palette, table.columns, showFilters, captionLines]);
+  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, captionLines]);
 
   if (measures.length === 0 || dims.length === 0) {
     return <p className="text-sm text-slate-500">No chartable data.</p>;
