@@ -97,6 +97,8 @@ Write:
    - The dominant pattern, with the numbers that establish it.
    - Anything where rates and counts disagree, or where a group's share is out of proportion to its size. These are the observations a reader cannot get by skimming.
    - When the fact sheet gives an AGE-ADJUSTED line for a breakdown, compare groups on that, not on the crude rate: groups with different age structures are not comparable on crude rates. Say "age-adjusted" when you use it. If crude and age-adjusted point at different groups, that difference is itself worth a bullet.
+   - When a rate ratio comes with a confidence interval, quote the interval with it. If the fact sheet says the interval INCLUDES 1, you must not describe that difference as real, a gap, or a disparity — say it is not statistically significant on these counts. The same applies to an annual percent change whose interval spans zero.
+   - When a SEASONALITY block is present, a month-to-month movement smaller than the seasonal swing is the calendar, not a trend, and must not be reported as one. Compare a month with the same month a year earlier instead.
    - Direction and size of change over time, including where the change is uneven across categories.
    - Specific contrasts: how much larger, what multiple, what share. Use the ratios and expected-vs-observed figures from the fact sheet where they exist.
    - Anything genuinely surprising given the rest of the table.

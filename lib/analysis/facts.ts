@@ -25,6 +25,8 @@ import { trend, type TrendResult } from "../stats/summary";
 import { describeFilters, describeGrouping } from "../describeSpec";
 import { VARIABLE_BY_KEY } from "../wonder/databases";
 import { getDatabase } from "../wonder/db/registry";
+import { formatRatio, rateRatio, type RateRatio } from "../stats/rates";
+import { decomposeSeasonality, describeSeasonality, type Decomposition, type MonthlyPoint } from "../stats/seasonality";
 
 // ---------------------------------------------------------------------------
 // Population is a denominator, not a count, and only some dimensions split it.
@@ -106,6 +108,12 @@ export interface DimensionFacts {
   highestAdjusted?: CategoryFact;
   lowestAdjusted?: CategoryFact;
   adjustedRatio: number | null;
+  /**
+   * The highest-to-lowest rate ratio with a confidence interval. A fourfold
+   * difference built on twelve deaths and one built on twelve thousand read
+   * identically without it.
+   */
+  disparity?: RateRatio;
   /** True when the largest count and the highest rate are different categories. */
   countRateDiverges: boolean;
 }
@@ -191,6 +199,8 @@ export interface FactSheet {
   time?: TimeFacts;
   /** Like-for-like comparison when a partial period is present. */
   ytd?: YtdFacts;
+  /** Seasonal decomposition, when the data is monthly and covers two years. */
+  seasonality?: Decomposition;
   interaction?: InteractionFacts;
   dataQuality: {
     suppressedCells: number;
@@ -356,6 +366,16 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
         highestRate && lowestRate && lowestRate.rate && lowestRate.rate > 0
           ? (highestRate.rate as number) / lowestRate.rate
           : null,
+      // Deaths and population for both ends, so the ratio carries an interval.
+      disparity:
+        highestRate && lowestRate && highestRate.deaths && lowestRate.deaths &&
+        highestRate.population && lowestRate.population
+          ? rateRatio(
+              { deaths: highestRate.deaths, population: highestRate.population },
+              { deaths: lowestRate.deaths, population: lowestRate.population },
+              per,
+            ) ?? undefined
+          : undefined,
       highestAdjusted,
       lowestAdjusted,
       adjustedRatio:
@@ -507,6 +527,9 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
   // ---- year-to-date ------------------------------------------------------
   const ytd = buildYtd(rows, dims, deathsIdx);
 
+  // ---- seasonality --------------------------------------------------------
+  const seasonality = buildSeasonality(rows, dims, deathsIdx);
+
   // ---- interaction (observed vs expected) ---------------------------------
   const interaction = buildInteraction(table, dims, deathsIdx);
 
@@ -546,6 +569,7 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
     dimensions,
     time,
     ytd: ytd ?? undefined,
+    seasonality: seasonality ?? undefined,
     interaction,
     dataQuality: {
       suppressedCells,
@@ -710,6 +734,12 @@ export function renderFactSheet(f: FactSheet): string {
           (d.rateRatio ? `; CRUDE ratio ${fmt(d.rateRatio, 2)}x` : ""),
       );
     }
+    if (d.disparity) {
+      const r = d.disparity;
+      L.push(
+        `- Highest-to-lowest rate ratio: ${formatRatio(r)}. ${r.significant ? "The interval excludes 1, so the difference is statistically significant." : "The interval INCLUDES 1: on these counts the difference is not statistically significant, and must not be described as a real gap."}`,
+      );
+    }
     if (d.highestAdjusted?.ageAdjustedRate != null && d.lowestAdjusted?.ageAdjustedRate != null) {
       L.push(
         `- AGE-ADJUSTED rate (use this to compare groups, not the crude rate), highest: ${d.highestAdjusted.label} at ${fmt(d.highestAdjusted.ageAdjustedRate, 2)}; lowest: ${d.lowestAdjusted.label} at ${fmt(d.lowestAdjusted.ageAdjustedRate, 2)}` +
@@ -810,6 +840,20 @@ export function renderFactSheet(f: FactSheet): string {
         `- ${c.rowLabel} / ${c.colLabel}: ${fmt(c.observed)} observed vs ${fmt(c.expected)} expected (${fmt(c.ratio, 2)}x, i.e. fewer than expected)`,
       );
     }
+    L.push("");
+  }
+
+  if (f.seasonality) {
+    const sn = f.seasonality;
+    L.push(`SEASONALITY (${sn.yearsUsed} years of monthly data)`);
+    L.push(`- ${describeSeasonality(sn)}.`);
+    L.push("- Monthly index (1.00 = the yearly average, corrected for month length):");
+    for (const m of sn.seasonal) {
+      L.push(`  - ${m.name}: ${m.index.toFixed(3)}`);
+    }
+    L.push(
+      "- A month-to-month change smaller than this swing is the calendar, not a trend. Compare a month with the SAME month a year earlier.",
+    );
     L.push("");
   }
 
@@ -1022,4 +1066,42 @@ function buildYtd(
     changePct:
       previous.deaths > 0 ? ((current.deaths - previous.deaths) / previous.deaths) * 100 : null,
   };
+}
+
+/**
+ * Seasonal decomposition, when the table is monthly and long enough.
+ *
+ * Deaths swing hard across the year — winter respiratory and cardiovascular
+ * deaths lift January well above July — and that swing is usually larger than
+ * the trend underneath it, so a raw monthly chart shows the calendar rather
+ * than the signal. Suicide has its own, smaller and opposite pattern, peaking
+ * in late spring, which is invisible without separating the two.
+ */
+function buildSeasonality(
+  rows: ResultCell[][],
+  dims: ReturnType<typeof dimensionCols>,
+  deathsIdx: number | null,
+): Decomposition | null {
+  if (deathsIdx === null) return null;
+  const monthDim = dims.find((d) => d.column.variableKey === "month");
+  if (!monthDim) return null;
+  const yearDim = dims.find((d) => d.column.variableKey === "year");
+
+  const points: MonthlyPoint[] = [];
+  for (const r of rows) {
+    const monthLabel = cellLabel(r[monthDim.index]);
+    const month = monthOfYear(monthLabel);
+    const v = cellNumber(r[deathsIdx]);
+    if (month === null || v === null) continue;
+    // The month label carries its own year ("Jan., 2024"); the year column is
+    // only a fallback for tables that group the other way round.
+    const fromLabel = monthLabel.match(/(\d{4})/)?.[1];
+    const yearText = fromLabel ?? (yearDim ? cellLabel(r[yearDim.index]) : "");
+    const year = parseInt(yearText, 10);
+    if (!Number.isFinite(year)) continue;
+    points.push({ month, year, value: v, label: monthLabel });
+  }
+  // An incomplete final month would read as a seasonal trough for that month.
+  const complete = points.filter((p) => !isPartialPeriod(p.label));
+  return decomposeSeasonality(complete);
 }

@@ -21,6 +21,7 @@ import {
 } from "@/lib/tableUtils";
 import { computeRegression } from "@/lib/stats/regression";
 import { describeApc, fitTrend, type TrendPoint } from "@/lib/stats/joinpoint";
+import { parseWonderCi } from "@/lib/stats/rates";
 import { exportPptx } from "@/lib/export/pptx";
 
 type ChartType =
@@ -110,6 +111,10 @@ export default function ChartPanel({
   const [sortDesc, setSortDesc] = useState(false);
   const [legendPos, setLegendPos] = useState<"top" | "right" | "bottom">("bottom");
   const [showFilters, setShowFilters] = useState(true);
+  // WONDER returns a confidence interval alongside every rate. The parser has
+  // always kept it and nothing ever drew it, so a rate built on nine deaths
+  // looked exactly as firm as one built on ninety thousand.
+  const [errorBars, setErrorBars] = useState(false);
   // How many categories to draw before folding the tail, remembered PER
   // DIMENSION. Null means "decide from the data" — grouping by injury mechanism
   // yields ~70 categories and a legend taller than the figure, which is
@@ -286,16 +291,23 @@ export default function ChartPanel({
     }
 
     const useNumericX = chartType === "scatter" || chartType === "bubble";
-    const seriesMap = new Map<string, { x: (string | number)[]; y: number[]; nx: number[] }>();
+    const seriesMap = new Map<
+      string,
+      { x: (string | number)[]; y: number[]; nx: number[]; ciLow: (number | null)[]; ciHigh: (number | null)[] }
+    >();
     for (const row of rows) {
       const seriesName = seriesIdx >= 0 ? cellLabel(row[seriesIdx]) : yCol?.label ?? "Value";
       const rawX = cellLabel(row[xIdx]);
       const y = cellNumber(row[measureIdx]);
       if (y === null) continue;
       const nx = numericEncode(xCol?.variableKey, rawX);
-      const bucket = seriesMap.get(seriesName) ?? { x: [], y: [], nx: [] };
+      const bucket =
+        seriesMap.get(seriesName) ?? { x: [], y: [], nx: [], ciLow: [], ciHigh: [] };
       bucket.x.push(useNumericX && nx !== null ? nx : rawX);
       bucket.y.push(y);
+      const ci = parseWonderCi(row[measureIdx]?.ci);
+      bucket.ciLow.push(ci ? ci.low : null);
+      bucket.ciHigh.push(ci ? ci.high : null);
       if (nx !== null) bucket.nx.push(nx);
       seriesMap.set(seriesName, bucket);
     }
@@ -322,6 +334,10 @@ export default function ChartPanel({
       if (additive && otherByX.size > 0) {
         const xs = [...otherByX.keys()];
         seriesMap.set(OTHER_LABEL, {
+          // No interval for a pooled category: WONDER's is per row, and the
+          // combined one is not the sum of its parts.
+          ciLow: xs.map(() => null),
+          ciHigh: xs.map(() => null),
           x: xs,
           y: xs.map((xv) => otherByX.get(xv) as number),
           nx: xs
@@ -363,7 +379,23 @@ export default function ChartPanel({
       const color = colors[ci % colors.length];
       ci++;
       const opacity = fadePartial(s.x);
+      // Only drawn when every point has an interval; a series with gaps in its
+      // error bars implies the bar-less points are precise, which is backwards.
+      const hasCi = s.ciLow.every((v, k) => v !== null && s.ciHigh[k] !== null);
+      const errorY =
+        errorBars && hasCi
+          ? {
+              type: "data" as const,
+              symmetric: false,
+              array: s.y.map((v, k) => (s.ciHigh[k] as number) - v),
+              arrayminus: s.y.map((v, k) => v - (s.ciLow[k] as number)),
+              color: "#64748b",
+              thickness: 1,
+              width: 3,
+            }
+          : undefined;
       const base: Record<string, unknown> = {
+        ...(errorY ? { error_y: errorY } : {}),
         name,
         marker: { color, size: chartType === "scatter" ? 9 : undefined, opacity },
         line: { color, shape: smooth && (chartType === "line" || chartType === "area") ? "spline" : "linear", width: 2.5 },
@@ -470,12 +502,19 @@ export default function ChartPanel({
           hoverinfo: "skip",
         });
         if (seriesEntries.length <= 3) {
+          const ci = (c: { low: number; high: number } | null) =>
+            c ? ` [${c.low.toFixed(1)} to ${c.high.toFixed(1)}]` : "";
           const parts = fit.segments.map(
-            (sg) => `${sg.startLabel}–${sg.endLabel} ${describeApc(sg.apc)}`,
+            (sg) =>
+              `${sg.startLabel}–${sg.endLabel} ${describeApc(sg.apc)}${ci(sg.apcCi)}${
+                sg.significant ? "" : " (not significant)"
+              }`,
           );
           const prefix = seriesEntries.length > 1 ? `${name}: ` : "";
           const aapc =
-            fit.segments.length > 1 ? `; overall ${describeApc(fit.aapc)}` : "";
+            fit.segments.length > 1
+              ? `; overall ${describeApc(fit.aapc)}${ci(fit.aapcCi)}`
+              : "";
           trendNotes.push(`${prefix}${parts.join(", then ")}${aapc} (r² = ${fit.r2.toFixed(2)})`);
         }
       }
@@ -504,7 +543,7 @@ export default function ChartPanel({
 
     return { data: traces, annotations: annos, regressionNote: note, folded: foldedCount };
     // logY is deliberately absent: it only affects the axis type in `layout`.
-  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, trendMode, dataLabels, smooth, sortDesc, xCol, yCol, effectiveTopN, additive]);
+  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, trendMode, errorBars, dataLabels, smooth, sortDesc, xCol, yCol, effectiveTopN, additive]);
 
   // A figure showing an "Other" slice is misleading in a report unless it says
   // what "Other" is, so the fold is recorded in the caption that travels with
@@ -780,6 +819,7 @@ export default function ChartPanel({
           <Toggle label="Caption + source on figure" checked={showFilters} onChange={setShowFilters} />
         )}
         {!isPie && <Toggle label="Log Y axis" checked={logY} onChange={setLogY} />}
+        {!isPie && <Toggle label="95% CI error bars" checked={errorBars} onChange={setErrorBars} />}
         {(chartType === "line" || chartType === "area") && <Toggle label="Smooth" checked={smooth} onChange={setSmooth} />}
         {(isBarLike(chartType) || isPie) && <Toggle label="Sort by value" checked={sortDesc} onChange={setSortDesc} />}
         {chartType === "scatter" && <Toggle label="Trendline + r²" checked={trendline} onChange={setTrendline} />}

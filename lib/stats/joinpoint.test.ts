@@ -79,3 +79,33 @@ test("describeApc reads as a direction and a magnitude", () => {
   assert.equal(describeApc(2.34), "up 2.3% per year");
   assert.equal(describeApc(-2.34), "down 2.3% per year");
 });
+
+test("each segment carries a confidence interval for its APC", () => {
+  const values = Array.from({ length: 12 }, (_, i) => 100 * 1.04 ** i);
+  const fit = fitTrend(series(values), 0);
+  assert.ok(fit);
+  const sg = fit.segments[0];
+  assert.ok(sg.apcCi, "an interval is reported");
+  assert.ok(sg.apcCi.low < sg.apc && sg.apc < sg.apcCi.high, "the estimate sits inside");
+  assert.equal(sg.significant, true, "a clean 4% rise is significant");
+  assert.ok(fit.aapcCi, "the overall AAPC has one too");
+});
+
+test("noise around a flat line is reported as not significant", () => {
+  // This is the point of the interval. "Up 0.3% per year" on this series means
+  // nothing, and without an interval it reads exactly like a real trend.
+  const noise = [100, 103, 98, 101, 99, 102, 100, 97, 103, 99, 101, 100];
+  const fit = fitTrend(series(noise), 0);
+  assert.ok(fit);
+  assert.equal(fit.segments[0].significant, false);
+  assert.ok(fit.segments[0].apcCi);
+  assert.ok(fit.segments[0].apcCi.low < 0 && fit.segments[0].apcCi.high > 0);
+});
+
+test("intervals widen as the series shortens", () => {
+  const long = fitTrend(series(Array.from({ length: 20 }, (_, i) => 100 * 1.03 ** i)), 0);
+  const short = fitTrend(series(Array.from({ length: 5 }, (_, i) => 100 * 1.03 ** i)), 0);
+  assert.ok(long?.segments[0].apcCi && short?.segments[0].apcCi);
+  const width = (c: { low: number; high: number }) => c.high - c.low;
+  assert.ok(width(short.segments[0].apcCi) > width(long.segments[0].apcCi));
+});

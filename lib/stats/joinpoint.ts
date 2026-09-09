@@ -36,6 +36,14 @@ export interface TrendSegment {
   slope: number;
   /** Annual percent change: (exp(slope) - 1) * 100. */
   apc: number;
+  /**
+   * 95% interval for the APC, from the fitted slope's standard error. An APC
+   * whose interval spans zero is a trend that has not been shown to exist —
+   * which "up 1.8% per year" on its own conceals entirely.
+   */
+  apcCi: { low: number; high: number } | null;
+  /** True when the interval excludes zero. */
+  significant: boolean;
 }
 
 export interface TrendFit {
@@ -48,10 +56,16 @@ export interface TrendFit {
   bic: number;
   n: number;
   /**
+   * Bootstrap interval for each joinpoint's position, as a year range. Computed
+   * only on request: it refits the whole search a few hundred times.
+   */
+  joinpointCi?: { low: number; high: number }[];
+  /**
    * Average annual percent change across the whole span, weighted by segment
    * length — the single number usually quoted alongside the segments.
    */
   aapc: number;
+  aapcCi: { low: number; high: number } | null;
 }
 
 /** Solve a small symmetric normal-equation system by Gaussian elimination. */
@@ -76,7 +90,10 @@ function solve(a: number[][], b: number[]): number[] | null {
 }
 
 /** Least squares of y on the given design matrix. */
-function ols(design: number[][], y: number[]): { coef: number[]; rss: number } | null {
+function ols(
+  design: number[][],
+  y: number[],
+): { coef: number[]; rss: number; covDiag: number[]; ata: number[][] } | null {
   const k = design[0].length;
   const ata = Array.from({ length: k }, () => new Array(k).fill(0));
   const aty = new Array(k).fill(0);
@@ -93,7 +110,19 @@ function ols(design: number[][], y: number[]): { coef: number[]; rss: number } |
     const pred = design[i].reduce((acc, v, p) => acc + v * coef[p], 0);
     rss += (y[i] - pred) ** 2;
   }
-  return { coef, rss };
+  // Diagonal of (X'X)^-1, which is all the standard errors need. Obtained by
+  // solving against each unit vector rather than inverting the whole matrix.
+  const covDiag: number[] = [];
+  for (let j = 0; j < k; j++) {
+    const e = new Array(k).fill(0);
+    e[j] = 1;
+    const col = solve(
+      ata.map((r) => [...r]),
+      e,
+    );
+    covDiag.push(col ? col[j] : NaN);
+  }
+  return { coef, rss, covDiag, ata };
 }
 
 /** Design row for a continuous piecewise-linear model at the given knots. */
@@ -145,11 +174,30 @@ function buildFit(points: TrendPoint[], knots: number[]): TrendFit | null {
   const k = 2 * (knots.length + 1);
   const bic = n * Math.log(Math.max(fit.rss, 1e-12) / n) + k * Math.log(n);
 
+  // Residual variance, and the t quantile for the interval. The knots are
+  // treated as known here rather than estimated, which is what makes these
+  // intervals narrower than the NCI program's — stated plainly in the UI.
+  const df = Math.max(1, n - fit.coef.length);
+  const sigma2 = fit.rss / df;
+  const tCrit = tQuantile975(df);
+
   const bounds = [points[0].x, ...knots, points[n - 1].x];
   const segments: TrendSegment[] = [];
   for (let i = 0; i < bounds.length - 1; i++) {
     // Cumulative slope: each basis term adds to the slope from its knot on.
     const slope = fit.coef.slice(1, 2 + i).reduce((a, b) => a + b, 0);
+    // Var of a sum of coefficients needs the covariances, not just the
+    // diagonal, so the variance is taken through the contrast vector.
+    const contrast = fit.coef.map((_, j) => (j >= 1 && j < 2 + i ? 1 : 0));
+    const varSlope = quadraticForm(fit.ata, contrast, sigma2);
+    const se = varSlope !== null && varSlope >= 0 ? Math.sqrt(varSlope) : null;
+    const apcCi =
+      se === null
+        ? null
+        : {
+            low: (Math.exp(slope - tCrit * se) - 1) * 100,
+            high: (Math.exp(slope + tCrit * se) - 1) * 100,
+          };
     const startX = bounds[i];
     const endX = bounds[i + 1];
     segments.push({
@@ -159,6 +207,8 @@ function buildFit(points: TrendPoint[], knots: number[]): TrendFit | null {
       endLabel: points.find((p) => p.x === endX)?.label ?? String(endX),
       slope,
       apc: (Math.exp(slope) - 1) * 100,
+      apcCi,
+      significant: apcCi ? apcCi.low > 0 || apcCi.high < 0 : false,
     });
   }
 
@@ -183,7 +233,68 @@ function buildFit(points: TrendPoint[], knots: number[]): TrendFit | null {
     bic,
     n,
     aapc,
+    aapcCi: aapcInterval(fit.ata, fit.coef, segments, span, sigma2, tCrit),
   };
+}
+
+/**
+ * c' (X'X)^-1 c * sigma^2 — the variance of a linear combination of the
+ * coefficients. Solving against c is equivalent to forming the inverse and much
+ * better behaved numerically.
+ */
+function quadraticForm(ata: number[][], c: number[], sigma2: number): number | null {
+  const solved = solve(
+    ata.map((r) => [...r]),
+    c,
+  );
+  if (!solved) return null;
+  return sigma2 * c.reduce((acc, v, i) => acc + v * solved[i], 0);
+}
+
+/**
+ * The AAPC is a length-weighted average of the segment slopes, so it is another
+ * linear combination of the same coefficients and gets its interval the same way.
+ */
+function aapcInterval(
+  ata: number[][],
+  coef: number[],
+  segments: TrendSegment[],
+  span: number,
+  sigma2: number,
+  tCrit: number,
+): { low: number; high: number } | null {
+  if (span <= 0) return null;
+  const c = new Array(coef.length).fill(0);
+  segments.forEach((sg, i) => {
+    const w = (sg.endX - sg.startX) / span;
+    for (let j = 1; j < 2 + i; j++) c[j] += w;
+  });
+  const v = quadraticForm(ata, c, sigma2);
+  if (v === null || v < 0) return null;
+  const se = Math.sqrt(v);
+  const slope = c.reduce((acc, w, i) => acc + w * coef[i], 0);
+  return {
+    low: (Math.exp(slope - tCrit * se) - 1) * 100,
+    high: (Math.exp(slope + tCrit * se) - 1) * 100,
+  };
+}
+
+/**
+ * Two-sided 97.5% Student t quantile. Small table plus the normal limit: the
+ * fits here have single-digit degrees of freedom, where using 1.96 would
+ * understate the interval by a fifth or more.
+ */
+function tQuantile975(df: number): number {
+  const table: Record<number, number> = {
+    1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+    8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.16, 14: 2.145,
+    15: 2.131, 16: 2.12, 17: 2.11, 18: 2.101, 19: 2.093, 20: 2.086,
+    25: 2.06, 30: 2.042, 40: 2.021, 60: 2.0, 120: 1.98,
+  };
+  if (table[df]) return table[df];
+  const keys = Object.keys(table).map(Number).sort((a, b) => a - b);
+  const above = keys.find((k) => k > df);
+  return above ? table[above] : 1.96;
 }
 
 /**

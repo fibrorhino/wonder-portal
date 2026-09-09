@@ -303,6 +303,42 @@ software in a publication, and the UI says so next to the control.
 `lib/stats/joinpoint.ts` is unit-tested against series with a known APC and a
 known bend.
 
+### Uncertainty
+
+Three things that were being asserted without it, now carry it.
+
+- **Rate ratios** (`lib/stats/rates.ts`) get a Poisson confidence interval, built
+  on the log scale because the ratio's distribution is skewed. "2.41 (95% CI
+  2.36–2.54)" — and where the interval includes 1, both the bullets and the
+  prompt forbid calling the difference real. A twofold gap on four deaths and
+  one on four hundred previously read identically.
+- **Annual percent change** carries an interval from the fitted slope's standard
+  error, using a t quantile rather than 1.96 because these fits have single-digit
+  degrees of freedom. A segment whose interval spans zero is labelled *not
+  significant*. Note these treat the joinpoint locations as known rather than
+  estimated, which makes them narrower than the NCI program's.
+- **Error bars** plot the confidence interval WONDER already returns with every
+  rate. The parser had always kept it and nothing ever drew it, so a rate built
+  on nine deaths looked exactly as firm as one built on ninety thousand. Drawn
+  only when every point in a series has one.
+
+### Seasonality
+
+For monthly data covering two or more years, `lib/stats/seasonality.ts` runs a
+classical multiplicative decomposition: a centred 12-month moving average as
+trend, the ratio to it taken by calendar month, normalised to average 1.
+
+Two details that matter. Counts are corrected for **month length** first —
+February is nearly 10% shorter than January, which otherwise appears as a
+seasonal dip that is purely calendar. And the index for each month is the
+**median** across years, not the mean, so one pandemic April cannot redefine
+April.
+
+On US suicide deaths 2015–2020 it recovers the documented pattern: a peak in
+June–August and a trough in November–December — the opposite of the common
+belief about the holidays, and invisible in a raw monthly chart because the
+seasonal swing is larger than the trend beneath it.
+
 ### Rate precision
 
 `O_precision` is sent as **3**, not WONDER's default of 1. At one decimal place

@@ -8,6 +8,8 @@
 
 import type { QuerySpec, ResultTable } from "./wonder/types";
 import { buildFactSheet, fmt, type CategoryFact, type FactSheet } from "./analysis/facts";
+import { formatRatio } from "./stats/rates";
+import { describeSeasonality } from "./stats/seasonality";
 
 const pct = (n: number | null | undefined, d = 1) =>
   n === null || n === undefined || !Number.isFinite(n) ? "" : `${fmt(n, d)}%`;
@@ -118,6 +120,17 @@ export function pointsFromFacts(f: FactSheet): string[] {
       );
     }
 
+    // A ratio without an interval reads the same whether it rests on twelve
+    // deaths or twelve thousand.
+    if (catDim.disparity) {
+      const r = catDim.disparity;
+      points.push(
+        r.significant
+          ? `The gap between the highest and lowest rates is ${formatRatio(r)} — the interval excludes 1, so it is unlikely to be chance.`
+          : `The highest-to-lowest rate ratio is ${formatRatio(r)}, but the interval includes 1: on these counts the difference is not statistically significant.`,
+      );
+    }
+
     // Age-adjusted is the comparison that actually holds when groups have
     // different age structures, so it gets its own point when available.
     const hi = catDim.highestAdjusted;
@@ -184,6 +197,13 @@ export function pointsFromFacts(f: FactSheet): string[] {
     const dir = change >= 0 ? "up" : "down";
     points.push(
       `Year to date — the same ${fmt(y.comparedMonths.length)} months (${y.comparedMonths[0]}–${y.comparedMonths[y.comparedMonths.length - 1]}) in each year — ${y.current.label} is ${dir} ${pct(Math.abs(change))} on ${y.previous.label}: ${fmt(y.current.deaths)} deaths against ${fmt(y.previous.deaths)}. ${y.droppedMonths.join(", ")} ${y.droppedMonths.length === 1 ? "is" : "are"} excluded from both years, not yet being fully processed.`,
+    );
+  }
+
+  // ---- seasonality ----
+  if (f.seasonality) {
+    points.push(
+      `Across the year, ${describeSeasonality(f.seasonality)}. A month-to-month change smaller than that is the calendar rather than a trend.`,
     );
   }
 
