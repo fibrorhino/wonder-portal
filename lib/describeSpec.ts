@@ -3,7 +3,8 @@
 // from the app).
 
 import type { QuerySpec } from "./wonder/types";
-import { DATABASE_LABEL, MANNER_OF_DEATH, VARIABLE_BY_KEY } from "./wonder/databases";
+import { MANNER_OF_DEATH } from "./wonder/databases";
+import { getDatabase, variableByKey } from "./wonder/db/registry";
 
 /** Collapse a sorted year list into ranges: 2019,2020,2021,2024 -> "2019–2021, 2024". */
 function summarizeYears(codes: string[]): string {
@@ -25,11 +26,16 @@ function summarizeYears(codes: string[]): string {
   return parts.join(", ");
 }
 
-function labelsFor(key: string, codes: string[]): string {
+// Variable labels and value lists differ per dataset, so every helper takes
+// the spec's variable map rather than reaching for a module-level D158 one.
+type VarMap = Record<string, { label: string; values: { code: string; label: string }[] }>;
+const varsOf = (spec: QuerySpec): VarMap =>
+  variableByKey(getDatabase(spec.database)) as unknown as VarMap;
+
+function labelsFor(vars: VarMap, key: string, codes: string[]): string {
   if (key === "year") return summarizeYears(codes);
   // Manner of Death uses friendlier labels than the raw WONDER intent values.
-  const source =
-    key === "injuryIntent" ? MANNER_OF_DEATH : VARIABLE_BY_KEY[key]?.values ?? [];
+  const source = key === "injuryIntent" ? MANNER_OF_DEATH : vars[key]?.values ?? [];
   const labels = codes.map(
     (c) => source.find((v) => v.code === c)?.label ?? c,
   );
@@ -40,21 +46,22 @@ function labelsFor(key: string, codes: string[]): string {
   return labels.join(", ");
 }
 
-function displayName(key: string): string {
+function displayName(vars: VarMap, key: string): string {
   if (key === "injuryIntent") return "Manner";
   if (key === "injuryMechanism") return "Mechanism";
   if (key === "ucdCause") return "ICD-10";
-  return VARIABLE_BY_KEY[key]?.label ?? key;
+  return vars[key]?.label ?? key;
 }
 
 /** One "Field: values" chip per active filter. */
 export function filterChips(spec: QuerySpec): { key: string; label: string; value: string }[] {
+  const vars = varsOf(spec);
   return Object.entries(spec.filters ?? {})
     .filter(([, codes]) => codes && codes.length > 0)
     .map(([key, codes]) => ({
       key,
-      label: displayName(key),
-      value: labelsFor(key, codes),
+      label: displayName(vars, key),
+      value: labelsFor(vars, key, codes),
     }));
 }
 
@@ -67,7 +74,8 @@ export function describeFilters(spec: QuerySpec): string {
 
 /** "Deaths by Year and Race" style description of what's being shown. */
 export function describeGrouping(spec: QuerySpec): string {
-  const groups = (spec.groupBy ?? []).map((k) => VARIABLE_BY_KEY[k]?.label ?? k);
+  const vars = varsOf(spec);
+  const groups = (spec.groupBy ?? []).map((k) => vars[k]?.label ?? k);
   if (groups.length === 0) return "";
   const last = groups[groups.length - 1];
   const head = groups.slice(0, -1);
@@ -84,8 +92,16 @@ export function figureCaption(spec: QuerySpec): string[] {
   const grouping = describeGrouping(spec);
   if (grouping) lines.push(`Grouped by ${grouping}`);
   lines.push(describeFilters(spec));
+  const db = getDatabase(spec.database);
   lines.push(
-    `Source: CDC/NCHS, ${DATABASE_LABEL}, via CDC WONDER (national data). Rates per 100,000.`,
+    `Source: CDC/NCHS, ${db.label}, via CDC WONDER (national data). Rates per 100,000.`,
   );
+  // A figure built on provisional data must say so wherever it ends up: the
+  // most recent periods are incomplete and will be revised upward.
+  if (db.provisional) {
+    lines.push(
+      "Provisional data: the most recent periods are incomplete and subject to revision.",
+    );
+  }
   return lines;
 }

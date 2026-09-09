@@ -12,7 +12,7 @@ import type {
   ResultTable,
 } from "./types";
 import { measureColumns } from "./buildRequest";
-import { VARIABLE_BY_KEY } from "./databases";
+import { getDatabase, variableByKey } from "./db/registry";
 
 const MEASURE_LABELS: Record<MeasureKey, string> = {
   deaths: "Deaths",
@@ -95,6 +95,7 @@ function toResultCell(raw: string | undefined, ci?: string): ResultCell {
 }
 
 export function parseResponse(xml: string, spec: QuerySpec): ResultTable {
+  const VARIABLE_BY_KEY = variableByKey(getDatabase(spec.database));
   const dimKeys = spec.groupBy.slice(0, 5);
   const dimCount = dimKeys.length;
   const measures = measureColumns(spec);

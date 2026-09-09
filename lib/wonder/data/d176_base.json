@@ -1,0 +1,343 @@
+{
+  "accept_datause_restrictions": [
+    "true"
+  ],
+  "B_1": [
+    "D176.V1-level1"
+  ],
+  "B_2": [
+    "*None*"
+  ],
+  "B_3": [
+    "*None*"
+  ],
+  "B_4": [
+    "*None*"
+  ],
+  "B_5": [
+    "*None*"
+  ],
+  "F_D176.V1": [
+    "*All*"
+  ],
+  "F_D176.V10": [
+    "*All*"
+  ],
+  "F_D176.V100": [
+    "*All*"
+  ],
+  "F_D176.V13": [
+    "*All*"
+  ],
+  "F_D176.V2": [
+    "*All*"
+  ],
+  "F_D176.V25": [
+    "*All*"
+  ],
+  "F_D176.V26": [
+    "*All*"
+  ],
+  "F_D176.V27": [
+    "*All*"
+  ],
+  "F_D176.V77": [
+    "*All*"
+  ],
+  "F_D176.V79": [
+    "*All*"
+  ],
+  "F_D176.V80": [
+    "*All*"
+  ],
+  "F_D176.V9": [
+    "*All*"
+  ],
+  "I_D176.V1": [
+    "*All* (All Dates) "
+  ],
+  "I_D176.V10": [
+    "*All* (The United States) "
+  ],
+  "I_D176.V100": [
+    "*All* (All Dates) "
+  ],
+  "I_D176.V2": [
+    "*All* "
+  ],
+  "I_D176.V25": [
+    "All Causes of Death "
+  ],
+  "I_D176.V27": [
+    "*All* (The United States) "
+  ],
+  "I_D176.V77": [
+    "*All* (The United States) "
+  ],
+  "I_D176.V79": [
+    "*All* (The United States) "
+  ],
+  "I_D176.V80": [
+    "*All* (The United States) "
+  ],
+  "I_D176.V9": [
+    "*All* (The United States) "
+  ],
+  "L_D176.V15": [
+    "*All*"
+  ],
+  "L_D176.V16": [
+    "*All*"
+  ],
+  "M_1": [
+    "D176.M1"
+  ],
+  "M_2": [
+    "D176.M2"
+  ],
+  "M_3": [
+    "D176.M3"
+  ],
+  "O_MMWR": [
+    "false"
+  ],
+  "O_V100_fmode": [
+    "freg"
+  ],
+  "O_V10_fmode": [
+    "freg"
+  ],
+  "O_V13_fmode": [
+    "fadv"
+  ],
+  "O_V15_fmode": [
+    "fadv"
+  ],
+  "O_V16_fmode": [
+    "fadv"
+  ],
+  "O_V1_fmode": [
+    "freg"
+  ],
+  "O_V25_fmode": [
+    "freg"
+  ],
+  "O_V26_fmode": [
+    "fadv"
+  ],
+  "O_V27_fmode": [
+    "freg"
+  ],
+  "O_V2_fmode": [
+    "freg"
+  ],
+  "O_V77_fmode": [
+    "freg"
+  ],
+  "O_V79_fmode": [
+    "freg"
+  ],
+  "O_V80_fmode": [
+    "freg"
+  ],
+  "O_V9_fmode": [
+    "freg"
+  ],
+  "O_aar": [
+    "aar_none"
+  ],
+  "O_aar_pop": [
+    "0000"
+  ],
+  "O_age": [
+    "D176.V5"
+  ],
+  "O_dates": [
+    "YEAR"
+  ],
+  "O_death_location": [
+    "D176.V79"
+  ],
+  "O_death_urban": [
+    "D176.V89"
+  ],
+  "O_javascript": [
+    "on"
+  ],
+  "O_location": [
+    "D176.V9"
+  ],
+  "O_mcd": [
+    "D176.V13"
+  ],
+  "O_oc-sect1-request": [
+    "close"
+  ],
+  "O_precision": [
+    "1"
+  ],
+  "O_race": [
+    "D176.V42"
+  ],
+  "O_rate_per": [
+    "100000"
+  ],
+  "O_show_totals": [
+    "true"
+  ],
+  "O_timeout": [
+    "600"
+  ],
+  "O_title": [],
+  "O_ucd": [
+    "D176.V2"
+  ],
+  "O_urban": [
+    "D176.V19"
+  ],
+  "VM_D176.M6_D176.V10": [],
+  "VM_D176.M6_D176.V17": [
+    "*All*"
+  ],
+  "VM_D176.M6_D176.V1_S": [
+    "*All*"
+  ],
+  "VM_D176.M6_D176.V42": [
+    "*All*"
+  ],
+  "VM_D176.M6_D176.V7": [
+    "*All*"
+  ],
+  "V_D176.V1": [],
+  "V_D176.V10": [],
+  "V_D176.V100": [],
+  "V_D176.V11": [
+    "*All*"
+  ],
+  "V_D176.V12": [
+    "*All*"
+  ],
+  "V_D176.V13": [],
+  "V_D176.V13_AND": [],
+  "V_D176.V15": [],
+  "V_D176.V15_AND": [],
+  "V_D176.V16": [],
+  "V_D176.V16_AND": [],
+  "V_D176.V17": [
+    "*All*"
+  ],
+  "V_D176.V19": [
+    "*All*"
+  ],
+  "V_D176.V2": [],
+  "V_D176.V20": [
+    "*All*"
+  ],
+  "V_D176.V21": [
+    "*All*"
+  ],
+  "V_D176.V22": [
+    "*All*"
+  ],
+  "V_D176.V23": [
+    "*All*"
+  ],
+  "V_D176.V25": [],
+  "V_D176.V26": [],
+  "V_D176.V26_AND": [],
+  "V_D176.V27": [],
+  "V_D176.V4": [
+    "*All*"
+  ],
+  "V_D176.V42": [
+    "*All*"
+  ],
+  "V_D176.V43": [
+    "*All*"
+  ],
+  "V_D176.V44": [
+    "*All*"
+  ],
+  "V_D176.V5": [
+    "*All*"
+  ],
+  "V_D176.V51": [
+    "*All*"
+  ],
+  "V_D176.V52": [
+    "*All*"
+  ],
+  "V_D176.V6": [
+    "00"
+  ],
+  "V_D176.V7": [
+    "*All*"
+  ],
+  "V_D176.V77": [],
+  "V_D176.V79": [],
+  "V_D176.V80": [],
+  "V_D176.V81": [
+    "*All*"
+  ],
+  "V_D176.V89": [
+    "*All*"
+  ],
+  "V_D176.V9": [],
+  "action-Send": [
+    "Send"
+  ],
+  "dataset_code": [
+    "D176"
+  ],
+  "dataset_label": [
+    "Provisional Mortality Statistics, 2018 through Last Month"
+  ],
+  "dataset_vintage": [
+    "January 22,2022 as of February 06,2022"
+  ],
+  "finder-stage-D176.V1": [
+    "codeset"
+  ],
+  "finder-stage-D176.V10": [
+    "codeset"
+  ],
+  "finder-stage-D176.V100": [
+    "codeset"
+  ],
+  "finder-stage-D176.V13": [
+    "codeset"
+  ],
+  "finder-stage-D176.V15": [],
+  "finder-stage-D176.V16": [],
+  "finder-stage-D176.V2": [
+    "codeset"
+  ],
+  "finder-stage-D176.V25": [
+    "codeset"
+  ],
+  "finder-stage-D176.V26": [
+    "codeset"
+  ],
+  "finder-stage-D176.V27": [
+    "codeset"
+  ],
+  "finder-stage-D176.V77": [
+    "codeset"
+  ],
+  "finder-stage-D176.V79": [
+    "codeset"
+  ],
+  "finder-stage-D176.V80": [
+    "codeset"
+  ],
+  "finder-stage-D176.V9": [
+    "codeset"
+  ],
+  "saved_id": [],
+  "stage": [
+    "request"
+  ],
+  "O_PR": [
+    "false"
+  ]
+}

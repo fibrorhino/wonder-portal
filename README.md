@@ -150,6 +150,60 @@ At paid rates (~$0.30/M in, $2.50/M out) one analysis is about **$0.002**:
 is surfaced as a plain "rate-limited, try again shortly" message and the
 computed talking points — which need no API at all — carry on regardless.
 
+## Datasets
+
+A dropdown switches which CDC WONDER database the app queries. This is not a
+filter: it changes which variables exist, which measures are available, and how
+the numbers must be read, so switching rebuilds the query rather than carrying
+the old one over.
+
+| | `D158` Final | `D176` Provisional |
+| --- | --- | --- |
+| Years | 2018–2024 | 2018–present |
+| Age-adjusted rate | yes | **no** (`M_4` does not exist) |
+| Weekday / education / 15-leading-causes / autopsy / 31-race | yes | **no** |
+| Recent periods | final | incomplete, revised upward |
+
+**Every WONDER database is a separate API.** The numbering differs, the required
+parameters differ, and nothing is documented. D176 rejects a D158-shaped request
+with *"Missing parameter O_PR"*, and rejects a reconstructed one with HTTP 500
+until roughly fifty further scaffolding parameters are present — multiple-cause
+and occurrence-geography variables the app does not even expose. So D176 carries
+a **verified request template** (`lib/wonder/data/d176_base.json`) captured from
+a working call, which the builder seeds from before applying group-by, measures
+and filters over the top. Adding a third dataset means the same probing
+exercise; expect it to take a session, not an afternoon.
+
+`lib/wonder/db/registry.ts` **adapts** D158 from `lib/wonder/databases.ts`
+rather than copying it. That module is the result of months of verification
+against the live API and re-typing it would risk a silent transcription error in
+exactly the values hardest to notice being wrong.
+
+### Not breaking the working dataset
+
+`lib/wonder/d158Snapshot.test.ts` pins the exact bytes D158 puts on the wire —
+every parameter name, the group-by tokens, the `O_` selectors, the finder
+scaffolding. It does not assert the request is *correct*; it asserts it is
+*unchanged*. Needing to edit those expectations is a signal to stop and
+re-verify against the live API, not to update the snapshot.
+
+### Provisional data is dangerous by default
+
+WONDER labels incomplete periods in the label itself — `2026 (provisional and
+partial)`. That row is a fraction of a year sitting at the end of a series, and
+a naive first-to-last trend reports it as a **36% decline**. The numeric
+verifier cannot catch that: the figure is genuinely in the table. So:
+
+- partial periods are excluded from every trend, per-series direction and
+  largest-move figure, and both the bullets and the fact sheet say which period
+  was left out and why;
+- a period whose population is identical to the previous one is flagged, because
+  CDC carries the last estimate forward rather than publishing a new one, so any
+  rate for it has a stale denominator;
+- comparing a provisional result against a final one is **refused**, not warned
+  about — the overlap differs only by processing lag, and a difference table
+  looks authoritative whatever caption sits above it.
+
 ## Talking points and the AI analysis
 
 Under every result is a **Talking points** panel. It has two tiers, and both are

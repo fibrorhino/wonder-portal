@@ -3,17 +3,7 @@
 // D158 API; group-by, measures, and filters are applied as overrides on top.
 
 import type { MeasureKey, QuerySpec } from "./types";
-import { DATABASE_ID, MEASURE_CODES, VARIABLE_BY_KEY } from "./databases";
-
-// Finder variables present in D158 (residence-only set that the API accepts).
-const FINDER_VARS = ["V1", "V10", "V2", "V27", "V9"];
-// Value variables we set defaults for (superset of what the UI exposes).
-// V44 (Single/Multi Race, 31 groups) is exposed as the `race31` variable, so
-// its default must be sent like every other race variable's.
-const VALUE_VARS = [
-  "V11", "V12", "V17", "V18", "V19", "V20", "V21", "V22", "V23", "V24",
-  "V28", "V4", "V42", "V43", "V44", "V45", "V5", "V51", "V52", "V7",
-];
+import { getDatabase, variableByKey } from "./db/registry";
 
 function escapeXml(s: string): string {
   return s
@@ -25,9 +15,21 @@ function escapeXml(s: string): string {
 
 /** Build the ordered parameter map for a spec. */
 function buildParams(spec: QuerySpec): Map<string, string[]> {
-  const db = DATABASE_ID;
+  // Driven by the dataset definition, not a module constant: every WONDER
+  // database has its own variable numbering and its own required parameters.
+  const def = getDatabase(spec.database);
+  const db = def.id;
+  const VARIABLE_BY_KEY = variableByKey(def);
+  const FINDER_VARS = def.finderVars;
+  const VALUE_VARS = def.valueVars;
   const p = new Map<string, string[]>();
   const set = (name: string, ...values: string[]) => p.set(name, values);
+
+  // Seed from the database's verified template first, so everything computed
+  // below overrides it rather than being lost.
+  if (def.baseParams) {
+    for (const [name, values] of Object.entries(def.baseParams)) p.set(name, values);
+  }
 
   set("accept_datause_restrictions", "true");
 
@@ -42,11 +44,13 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   // --- Measures (M1-M3 mandatory; M4 optional) ---
   const groupingByAge = groupBy.some((k) => k.startsWith("age"));
   const wantsAgeAdjusted =
-    spec.measures.includes("ageAdjustedRate") && !groupingByAge;
-  set("M_1", MEASURE_CODES.deaths);
-  set("M_2", MEASURE_CODES.population);
-  set("M_3", MEASURE_CODES.crudeRate);
-  if (wantsAgeAdjusted) set("M_4", MEASURE_CODES.ageAdjustedRate);
+    spec.measures.includes("ageAdjustedRate") &&
+    !groupingByAge &&
+    def.measures.includes("ageAdjustedRate");
+  set("M_1", `${db}.M1`);
+  set("M_2", `${db}.M2`);
+  set("M_3", `${db}.M3`);
+  if (wantsAgeAdjusted) set("M_4", `${db}.M4`);
 
   // --- Finder defaults ---
   for (const v of FINDER_VARS) {
@@ -59,21 +63,24 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   // --- Options ---
   set("O_aar", wantsAgeAdjusted ? "aar_std" : "aar_none");
   set("O_aar_pop", "0000");
-  set("O_age", `${db}.V5`);
+  set("O_age", def.selectors.age);
   set("O_dates", "YEAR");
   set("O_javascript", "on");
-  set("O_location", `${db}.V9`);
+  set("O_location", def.selectors.location);
   set("O_oc-sect1-request", "close");
   set("O_precision", "1");
-  set("O_race", `${db}.V42`);
+  set("O_race", def.selectors.race);
   set("O_rate_per", String(spec.options.ratePer ?? 100000));
   set("O_show_totals", spec.options.showTotals === false ? "false" : "true");
-  set("O_show_zeros", spec.options.showZeros === false ? "false" : "true");
-  set("O_show_suppressed", spec.options.showSuppressed === false ? "false" : "true");
+  // Not every database accepts these; D176's own request template omits them.
+  if (def.supportsDisplayToggles) {
+    set("O_show_zeros", spec.options.showZeros === false ? "false" : "true");
+    set("O_show_suppressed", spec.options.showSuppressed === false ? "false" : "true");
+  }
   set("O_timeout", "600");
   set("O_title", "");
-  set("O_ucd", `${db}.V2`);
-  set("O_urban", `${db}.V19`);
+  set("O_ucd", def.selectors.ucd);
+  set("O_urban", def.selectors.urban);
 
   // --- VM (age-adjust cross vars) ---
   set(`VM_${db}.M6_${db}.V10`, "");
@@ -136,9 +143,12 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   // --- Control params ---
   set("action-Send", "Send");
   set("dataset_code", db);
-  set("dataset_label", "Underlying Cause of Death, by Single-Race Categories");
+  set("dataset_label", def.datasetLabel);
   set("stage", "request");
   set("saved_id", "");
+
+  // Whatever else this particular database demands, verbatim.
+  for (const [name, value] of Object.entries(def.extraParams)) set(name, value);
 
   return p;
 }
@@ -161,9 +171,14 @@ export function buildRequestXml(spec: QuerySpec): string {
 
 /** Which measure columns the response will contain, in order. */
 export function measureColumns(spec: QuerySpec): MeasureKey[] {
+  const def = getDatabase(spec.database);
   const groupingByAge = spec.groupBy.some((k) => k.startsWith("age"));
   const cols: MeasureKey[] = ["deaths", "population", "crudeRate"];
-  if (spec.measures.includes("ageAdjustedRate") && !groupingByAge) {
+  if (
+    spec.measures.includes("ageAdjustedRate") &&
+    !groupingByAge &&
+    def.measures.includes("ageAdjustedRate")
+  ) {
     cols.push("ageAdjustedRate");
   }
   return cols;

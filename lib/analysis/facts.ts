@@ -23,7 +23,8 @@ import {
 } from "../tableUtils";
 import { trend, type TrendResult } from "../stats/summary";
 import { describeFilters, describeGrouping } from "../describeSpec";
-import { DATABASE_LABEL, VARIABLE_BY_KEY } from "../wonder/databases";
+import { VARIABLE_BY_KEY } from "../wonder/databases";
+import { getDatabase } from "../wonder/db/registry";
 
 // ---------------------------------------------------------------------------
 // Population is a denominator, not a count, and only some dimensions split it.
@@ -50,6 +51,23 @@ const POPULATION_PARTITIONING = new Set([
 ]);
 
 const TIME_KEYS = new Set(["year", "month"]);
+
+/**
+ * WONDER marks incomplete periods in the label itself, e.g.
+ * "2026 (provisional and partial)". A partial period is a fraction of a year
+ * of deaths sitting at the end of a series, and every trend measure computed
+ * through it is wrong: first-to-last change, the largest single-period move,
+ * per-series direction. The analysis would report a 36% "decline" that is
+ * really eight months of data, and the numeric verifier cannot catch it
+ * because the figure is genuinely in the table.
+ *
+ * So partial periods are excluded from every trend and flagged instead.
+ */
+const PARTIAL_LABEL = /\bpartial\b/i;
+const PROVISIONAL_LABEL = /\bprovisional\b/i;
+
+export const isPartialPeriod = (label: string) => PARTIAL_LABEL.test(label);
+export const isProvisionalPeriod = (label: string) => PROVISIONAL_LABEL.test(label);
 
 export interface CategoryFact {
   label: string;
@@ -113,6 +131,17 @@ export interface TimeFacts {
   /** Per-category trends for the primary categorical dimension. */
   bySeries: SeriesTrend[];
   seriesDimLabel?: string;
+  /** Periods excluded from every trend because they are incomplete. */
+  partialLabels: string[];
+  /**
+   * Periods whose population is identical to the preceding period's. CDC
+   * carries the last available estimate forward rather than publishing a new
+   * one, so any rate for these periods has a denominator that is a year or
+   * more out of date.
+   */
+  carriedForwardPopulation: string[];
+  /** Complete but provisional periods: included, but subject to revision. */
+  provisionalLabels: string[];
 }
 
 export interface CellFact {
@@ -132,6 +161,8 @@ export interface InteractionFacts {
 
 export interface FactSheet {
   database: string;
+  /** True when this dataset's recent periods are provisional. */
+  provisional: boolean;
   grouping: string;
   filters: string;
   measures: string[];
@@ -173,6 +204,7 @@ function rateOf(deaths: number | null, population: number | null, per: number): 
 }
 
 export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet {
+  const dbDef = getDatabase(spec?.database);
   const rows = dataRows(table);
   const dims = dimensionCols(table);
   const measures = measureCols(table);
@@ -354,10 +386,29 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       }))
       .sort((a, b) => a.ord - b.ord);
 
-    const deathPts = points
+    // Trends are computed on COMPLETE periods only. A partial period is a
+    // fraction of a year sitting at the end of the series; including it turns
+    // "eight months of 2026 so far" into a catastrophic decline, stated as
+    // fact. The partial points stay in `points` so the table still shows them,
+    // but nothing derived from direction or magnitude may use them.
+    const complete = points.filter((p) => !isPartialPeriod(p.label));
+    const partialLabels = points.filter((p) => isPartialPeriod(p.label)).map((p) => p.label);
+
+    // An unchanged denominator between consecutive periods means CDC has not
+    // published a new population estimate yet, not that the population held
+    // still. Any rate built on it is approximate.
+    const popByLabel = [...byT.entries()].map(([label, b]) => ({ label, pop: sum(b.p) }));
+    const ordered = popByLabel.sort(
+      (a, b) => (numericEncode(key, a.label) ?? 0) - (numericEncode(key, b.label) ?? 0),
+    );
+    const carriedForwardPopulation = ordered
+      .filter((p, i) => i > 0 && p.pop !== null && p.pop === ordered[i - 1].pop)
+      .map((p) => p.label);
+
+    const deathPts = complete
       .filter((p) => p.deaths !== null)
       .map((p) => ({ label: p.label, value: p.deaths as number }));
-    const ratePts = points
+    const ratePts = complete
       .filter((p) => p.rate !== null)
       .map((p) => ({ label: p.label, value: p.rate as number }));
 
@@ -400,6 +451,9 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
         const m = seriesPoints.get(name);
         if (!m) continue;
         const pts = [...m.entries()]
+          // Same rule as the overall trend: a per-series direction measured
+          // through a partial period is wrong in the same way.
+          .filter(([label]) => !isPartialPeriod(label))
           .map(([label, value]) => ({ label, value, ord: numericEncode(key, label) ?? 0 }))
           .sort((a, b) => a.ord - b.ord);
         const tr = trend(pts);
@@ -427,6 +481,11 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       largestStep,
       bySeries,
       seriesDimLabel: catDim?.column.label,
+      partialLabels,
+      carriedForwardPopulation,
+      provisionalLabels: points
+        .filter((p) => isProvisionalPeriod(p.label) && !isPartialPeriod(p.label))
+        .map((p) => p.label),
     };
   }
 
@@ -453,7 +512,8 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
     .map((r) => table.columns.map((_, i) => (r[i] ? cellLabel(r[i]) || r[i].raw : "")));
 
   return {
-    database: DATABASE_LABEL,
+    database: dbDef.label,
+    provisional: dbDef.provisional,
     grouping: spec ? describeGrouping(spec) : dims.map((d) => d.column.label).join(", "),
     filters: spec ? describeFilters(spec) : "(unknown)",
     measures: measures.map((m) => m.column.label),
@@ -574,6 +634,25 @@ export function renderFactSheet(f: FactSheet): string {
   L.push(`FILTERS: ${f.filters}`);
   L.push(`MEASURES SHOWN: ${f.measures.join(", ")}`);
   L.push(`DATA ROWS: ${f.rowCount}`);
+
+  // Stated up front, before any figure, because it changes how every number
+  // below should be read.
+  if (f.provisional) {
+    L.push("");
+    L.push(
+      "PROVISIONAL DATA. The most recent periods are incomplete and will be revised upward as death certificates are processed. Say so when discussing recent periods.",
+    );
+    if (f.time?.partialLabels.length) {
+      L.push(
+        `PARTIAL PERIODS: ${f.time.partialLabels.join(", ")}. These cover only part of the period. They are shown in the table but are EXCLUDED from every trend figure below, and you must not describe them as a rise or fall — a partial period is smaller because it has not finished, not because deaths went down.`,
+      );
+    }
+    if (f.time?.provisionalLabels.length) {
+      L.push(
+        `PROVISIONAL BUT COMPLETE: ${f.time.provisionalLabels.join(", ")}. Counted in full, but still subject to upward revision.`,
+      );
+    }
+  }
   L.push("");
 
   L.push("TOTALS");
@@ -632,7 +711,22 @@ export function renderFactSheet(f: FactSheet): string {
     for (const p of t.points) {
       const bits = [`deaths ${fmt(p.deaths)}`];
       if (p.rate !== null) bits.push(`rate ${fmt(p.rate, 2)}`);
-      L.push(`- ${p.label}: ${bits.join("; ")}`);
+      // Marked inline as well as in the header block: the model reads these
+      // rows one at a time and needs the warning attached to the number.
+      const mark = isPartialPeriod(p.label)
+        ? "  [INCOMPLETE PERIOD - not comparable with the others]"
+        : "";
+      L.push(`- ${p.label}: ${bits.join("; ")}${mark}`);
+    }
+    if (t.partialLabels.length) {
+      L.push(
+        `- Every trend figure below is computed on complete periods only, ending at ${t.deathsTrend?.lastLabel ?? "the last complete period"}. ${t.partialLabels.join(", ")} ${t.partialLabels.length === 1 ? "is" : "are"} excluded.`,
+      );
+    }
+    if (t.carriedForwardPopulation.length) {
+      L.push(
+        `- DENOMINATOR WARNING: ${t.carriedForwardPopulation.join(", ")} reuse the previous period's population because CDC has not published a newer estimate. Rates for those periods are approximate; do not present them as precise, and prefer counts when comparing them.`,
+      );
     }
     if (t.deathsTrend && Number.isFinite(t.deathsTrend.totalChangePct)) {
       const tr = t.deathsTrend;

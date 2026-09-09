@@ -25,6 +25,8 @@ export interface ComparisonRow {
 export interface Comparison {
   /** True when the two tables share a grouping and rows could be aligned. */
   aligned: boolean;
+  /** Set when the two results come from different datasets. */
+  datasetMismatch?: { a: string; b: string };
   note?: string;
   dimensionLabels: string[];
   measureKey: MeasureKey;
@@ -70,6 +72,7 @@ export function compareTables(
   a: ResultTable,
   b: ResultTable,
   preferred?: MeasureKey,
+  datasets?: { a: string | undefined; b: string | undefined },
 ): Comparison | null {
   const aMeasures = measureCols(a);
   const bMeasures = measureCols(b);
@@ -105,6 +108,26 @@ export function compareTables(
     diff: totalA !== null && totalB !== null ? totalB - totalA : null,
     pctChange: pctChange(totalA, totalB),
   };
+
+  // Diffing final against provisional data compares like with unlike: the
+  // provisional file undercounts recent periods and revises upward, so every
+  // difference in the overlap is an artefact of processing lag rather than a
+  // real change. Refused rather than shown with a warning, because the table
+  // would look authoritative either way.
+  if (datasets && datasets.a && datasets.b && datasets.a !== datasets.b) {
+    return {
+      aligned: false,
+      datasetMismatch: { a: datasets.a, b: datasets.b },
+      note: "These two results come from different datasets, so they cannot be compared. Provisional data undercounts recent periods and is revised upward, so any difference against the final file would reflect processing lag rather than a real change. Pin two results from the same dataset instead.",
+      dimensionLabels: [],
+      measureKey,
+      measureLabel,
+      rows: [],
+      totals: { a: null, b: null, diff: null, pctChange: null },
+      onlyInA: [],
+      onlyInB: [],
+    };
+  }
 
   const aDims = dimensionCols(a).map((d) => d.column.variableKey ?? d.column.label);
   const bDims = dimensionCols(b).map((d) => d.column.variableKey ?? d.column.label);

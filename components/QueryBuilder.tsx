@@ -9,19 +9,20 @@ import type { MeasureKey, QuerySpec } from "@/lib/wonder/types";
 import { ALL_MEASURES } from "@/lib/wonder/types";
 import {
   ICD10_REFERENCE_URL,
-  ICD_PRESETS,
   INJURY_MECHANISMS,
   MANNER_OF_DEATH,
   NATURAL_MANNER_CODE,
   NONINJURY_MECHANISMS,
-  VARIABLES,
-  VARIABLE_BY_KEY,
 } from "@/lib/wonder/databases";
+import { getDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import MultiSelect from "./MultiSelect";
 import { DataUseFootnote, DataUseMark } from "./DataUseNotice";
 import PillSelect from "./PillSelect";
 
 const CAUSE_KEYS = ["ucdCause", "injuryIntent", "injuryMechanism", "leadingCauses"];
+// The order filters are offered in. Which of these actually appear depends on
+// the dataset: the provisional file has no weekday, education or autopsy
+// variable, so those are simply absent rather than shown and broken.
 const FILTER_KEYS = [
   "year",
   "sex",
@@ -37,7 +38,6 @@ const FILTER_KEYS = [
   "autopsy",
 ];
 
-const groupableVars = VARIABLES.filter((v) => v.canGroup);
 
 export default function QueryBuilder({
   spec,
@@ -51,6 +51,14 @@ export default function QueryBuilder({
   loading: boolean;
 }) {
   const [icdText, setIcdText] = useState("");
+
+  // Variables, measures and presets all come from the selected dataset. The
+  // provisional file exposes a different set, so nothing here may be read from
+  // a module-level D158 constant.
+  const db = getDatabase(spec.database);
+  const VARIABLE_BY_KEY = useMemo(() => variableByKey(db), [db]);
+  const groupableVars = useMemo(() => db.variables.filter((v) => v.canGroup), [db]);
+  const ICD_PRESETS = db.icdPresets;
 
   const setFilters = (filters: Record<string, string[]>) =>
     onChange({ ...spec, filters });
@@ -331,7 +339,7 @@ export default function QueryBuilder({
       <section>
         <h3 className="mb-2 text-sm font-semibold text-slate-800">Measures</h3>
         <div className="flex flex-wrap gap-3">
-          {ALL_MEASURES.map((m) => (
+          {ALL_MEASURES.filter((m) => db.measures.includes(m.key)).map((m) => (
             <label
               key={m.key}
               className="flex items-center gap-2 text-sm text-slate-700"

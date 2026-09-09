@@ -57,8 +57,12 @@ export default function ComparePanel({
 }) {
   const [measure, setMeasure] = useState<MeasureKey | undefined>(undefined);
   const cmp = useMemo(
-    () => compareTables(pinned, current, measure),
-    [pinned, current, measure],
+    () =>
+      compareTables(pinned, current, measure, {
+        a: pinnedSpec?.database,
+        b: currentSpec?.database,
+      }),
+    [pinned, current, measure, pinnedSpec?.database, currentSpec?.database],
   );
 
   const describe = (spec?: QuerySpec) =>
@@ -113,7 +117,7 @@ export default function ComparePanel({
         </button>
       </div>
 
-      {cmp.totals.a !== null || cmp.totals.b !== null ? (
+      {cmp.datasetMismatch ? null : cmp.totals.a !== null || cmp.totals.b !== null ? (
         <div className="flex flex-wrap gap-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
           <span>
             <span className="text-xs text-slate-500">Total A </span>
