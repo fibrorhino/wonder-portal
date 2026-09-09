@@ -88,6 +88,15 @@ export const EXAMPLE_QUERIES: ExampleQuery[] = [
     },
   },
   {
+    label: "Suicide seasonality",
+    hint: "Year × month",
+    spec: {
+      ...BASE,
+      groupBy: ["year", "month"],
+      filters: { injuryIntent: ["2"] },
+    },
+  },
+  {
     label: "Deaths by manner",
     hint: "Suicide, homicide, accident",
     spec: {

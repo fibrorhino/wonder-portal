@@ -339,6 +339,12 @@ June–August and a trough in November–December — the opposite of the common
 belief about the holidays, and invisible in a raw monthly chart because the
 seasonal swing is larger than the trend beneath it.
 
+**To see it:** run the *Suicide seasonality* example, or group any query by Year
+and Month over two or more years, then open the **Stats** tab — a *Seasonality*
+mode appears, and is selected by default when the data supports it, showing the
+twelve monthly indices with a bar centred on the yearly average. It also gets a
+sentence in the talking points.
+
 ### Rate precision
 
 `O_precision` is sent as **3**, not WONDER's default of 1. At one decimal place

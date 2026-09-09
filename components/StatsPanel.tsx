@@ -8,7 +8,9 @@
 // All methods operate on aggregated counts, not individual decedents.
 
 import { useMemo, useState } from "react";
-import type { ResultTable } from "@/lib/wonder/types";
+import type { QuerySpec, ResultTable } from "@/lib/wonder/types";
+import { buildFactSheet } from "@/lib/analysis/facts";
+import { describeSeasonality } from "@/lib/stats/seasonality";
 import {
   cellLabel,
   cellNumber,
@@ -21,7 +23,7 @@ import { computeRegression } from "@/lib/stats/regression";
 import { chiSquareFromCounts, pearson, spearman } from "@/lib/stats/correlation";
 import { describe, oneWayAnova, trend } from "@/lib/stats/summary";
 
-type Mode = "regression" | "anova" | "chisquare" | "descriptive";
+type Mode = "regression" | "anova" | "chisquare" | "descriptive" | "seasonality";
 
 const NUMERIC_KEYS = ["year", "month", "ageTen", "ageFive", "ageSingle"];
 
@@ -34,7 +36,13 @@ function fmtNum(x: number, d = 2): string {
   return x.toLocaleString(undefined, { maximumFractionDigits: d });
 }
 
-export default function StatsPanel({ table }: { table: ResultTable }) {
+export default function StatsPanel({
+  table,
+  spec,
+}: {
+  table: ResultTable;
+  spec?: QuerySpec;
+}) {
   const dims = useMemo(() => dimensionCols(table), [table]);
   const measures = useMemo(() => measureCols(table), [table]);
   const rows = useMemo(() => dataRows(table), [table]);
@@ -43,7 +51,17 @@ export default function StatsPanel({ table }: { table: ResultTable }) {
     [dims],
   );
 
-  const [mode, setMode] = useState<Mode>(numericDims.length > 0 ? "regression" : "descriptive");
+  // Seasonality is only computable from monthly data spanning two years, so it
+  // is offered only when the query actually produced that — and led with when
+  // it did, since it is the thing that query is for.
+  const seasonality = useMemo(
+    () => buildFactSheet(table, spec).seasonality ?? null,
+    [table, spec],
+  );
+
+  const [mode, setMode] = useState<Mode>(
+    seasonality ? "seasonality" : numericDims.length > 0 ? "regression" : "descriptive",
+  );
   const [xIdx, setXIdx] = useState(numericDims[0]?.index ?? dims[0]?.index ?? 0);
   const [yIdx, setYIdx] = useState(measures[0]?.index ?? 0);
   const [rowIdx, setRowIdx] = useState(dims[0]?.index ?? 0);
@@ -113,6 +131,11 @@ export default function StatsPanel({ table }: { table: ResultTable }) {
         <ModeButton active={mode === "anova"} onClick={() => setMode("anova")}>ANOVA</ModeButton>
         <ModeButton active={mode === "chisquare"} onClick={() => setMode("chisquare")}>Chi-square</ModeButton>
         <ModeButton active={mode === "descriptive"} onClick={() => setMode("descriptive")}>Descriptives</ModeButton>
+        {seasonality && (
+          <ModeButton active={mode === "seasonality"} onClick={() => setMode("seasonality")}>
+            Seasonality
+          </ModeButton>
+        )}
       </div>
 
       {mode === "regression" && (
@@ -195,6 +218,89 @@ export default function StatsPanel({ table }: { table: ResultTable }) {
             </Card>
           )}
         </div>
+      )}
+
+      {mode === "seasonality" && seasonality && (
+        <Card>
+          <p className="text-sm text-slate-700">{describeSeasonality(seasonality)}.</p>
+          <Note>
+            Classical multiplicative decomposition over {seasonality.yearsUsed} years: a
+            centred 12-month moving average as the trend, then each month&rsquo;s ratio to
+            it. An index of 1.00 is the yearly average. Counts are corrected for month
+            length first — February is nearly 10% shorter than January, which would
+            otherwise look like a seasonal dip. Each month uses the median across years,
+            so one unusual year cannot redefine a month.
+          </Note>
+          <div className="mt-3 overflow-x-auto">
+            <table className="min-w-full border-collapse text-sm">
+              <thead className="bg-slate-100">
+                <tr>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    Month
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    Index
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-right font-semibold text-slate-700">
+                    vs average
+                  </th>
+                  <th className="border-b border-slate-200 px-3 py-2 text-left font-semibold text-slate-700">
+                    &nbsp;
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {seasonality.seasonal.map((m) => {
+                  const pct = (m.index - 1) * 100;
+                  // A bar centred on the yearly average, so the shape of the
+                  // year is visible without reading twelve numbers.
+                  const width = Math.min(50, Math.abs(pct) * 4);
+                  return (
+                    <tr key={m.month} className="odd:bg-white even:bg-slate-50/50">
+                      <td className="px-3 py-1.5 text-slate-700">{m.name}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-700">
+                        {m.index.toFixed(3)}
+                      </td>
+                      <td
+                        className={`px-3 py-1.5 text-right tabular-nums ${
+                          pct >= 0 ? "text-rose-600" : "text-emerald-700"
+                        }`}
+                      >
+                        {pct >= 0 ? "+" : "−"}
+                        {Math.abs(pct).toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-1.5">
+                        <span className="flex h-2 w-[110px] items-center">
+                          <span className="flex h-2 w-1/2 justify-end">
+                            {pct < 0 && (
+                              <span
+                                className="h-2 rounded-l bg-emerald-400"
+                                style={{ width: `${width}%` }}
+                              />
+                            )}
+                          </span>
+                          <span className="flex h-2 w-1/2">
+                            {pct >= 0 && (
+                              <span
+                                className="h-2 rounded-r bg-rose-400"
+                                style={{ width: `${width}%` }}
+                              />
+                            )}
+                          </span>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <Note>
+            A month-to-month movement smaller than this swing is the calendar, not a
+            trend. To judge a recent month, compare it with the same month a year
+            earlier.
+          </Note>
+        </Card>
       )}
 
       {mode === "descriptive" && desc && (

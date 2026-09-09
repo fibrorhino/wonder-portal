@@ -448,7 +448,7 @@ export default function Home() {
                     talkingPoints={points}
                   />
                 )}
-                {tab === "stats" && <StatsPanel key={shapeKey} table={table} />}
+                {tab === "stats" && <StatsPanel key={shapeKey} table={table} spec={result?.spec} />}
                 {tab === "compare" && pinned && (
                   <ComparePanel
                     pinned={pinned.table}
