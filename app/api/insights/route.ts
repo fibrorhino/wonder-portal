@@ -20,6 +20,12 @@ import { buildFactSheet, keyFigures, renderFactSheet } from "@/lib/analysis/fact
 import { buildAllowSet, verifyStatements } from "@/lib/analysis/verify";
 import { pointsFromFacts } from "@/lib/insights";
 import { createCache } from "@/lib/cache";
+import {
+  describeQuota,
+  parseQuotaFailure,
+  quotaMessage,
+  type QuotaFailure,
+} from "@/lib/geminiQuota";
 
 export const runtime = "nodejs";
 
@@ -175,6 +181,10 @@ export async function POST(req: NextRequest) {
   try {
     let res: Response | null = null;
     let model = GEMINI_MODELS[0];
+    // A failing response's body can only be read once, so it is captured here
+    // and reused below rather than re-read.
+    let detail: string | null = null;
+    let quota: QuotaFailure | null = null;
     outer: for (const candidate of GEMINI_MODELS) {
       model = candidate;
       // Gemini's free tier returns 503 under load; a short backoff clears it.
@@ -187,32 +197,37 @@ export async function POST(req: NextRequest) {
           signal: AbortSignal.timeout(45_000),
         });
         if (res.ok) break outer;
+        detail = await res.text();
         // 404 means this model id is gone — move on rather than retrying it.
         if (res.status === 404) break;
-        // 429 is the project's daily free-tier quota, shared across every
-        // model, so trying another one or waiting a second achieves nothing.
-        if (res.status === 429) break outer;
+        if (res.status === 429) {
+          quota = parseQuotaFailure(detail);
+          // Google no longer publishes the free-tier numbers, so this line is
+          // the only record of which limit was hit and what its value is.
+          console.warn(
+            `[insights] 429 from ${candidate}: ${quota ? describeQuota(quota) : detail.slice(0, 200)}`,
+          );
+          // Free-tier limits are scoped per model, so the next id in the list
+          // has its own allowance and is worth trying — which is the entire
+          // point of having a fallback chain. Only a project-wide quota (or a
+          // body that did not say) makes trying another one pointless.
+          if (quota?.perModelOnly) break;
+          break outer;
+        }
         if (res.status !== 503) break outer;
       }
     }
     if (!res || !res.ok) {
-      const detail = res ? await res.text() : "no response";
+      detail = detail ?? (res ? await res.text() : "no response");
       // A raw API error blob tells the reader nothing they can act on, and the
       // two cases that actually happen have different answers: wait a moment,
       // or wait until tomorrow.
       if (res?.status === 429) {
-        return NextResponse.json(
-          {
-            ok: false,
-            // The free tier enforces both a per-minute and a per-day limit and
-            // returns 429 for either, without saying which — so the message
-            // must not claim to know. In practice it is almost always the
-            // per-minute one and clears on its own.
-            error:
-              "AI analysis is rate-limited right now. This usually clears within a minute — try again shortly. If it keeps happening, the daily free-tier limit has been reached and resets at midnight Pacific. The talking points below are computed directly from the data and do not need the AI.",
-          },
-          { status: 429 },
-        );
+        // The free tier enforces both a per-minute and a per-day limit and
+        // returns 429 for either. The body usually says which, and often for
+        // how long; where it does not, the message says so rather than
+        // guessing.
+        return NextResponse.json({ ok: false, error: quotaMessage(quota) }, { status: 429 });
       }
       if (res?.status === 503) {
         return NextResponse.json(

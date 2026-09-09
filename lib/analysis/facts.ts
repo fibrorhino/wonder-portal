@@ -327,7 +327,17 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       (c) => !((c.deaths === null || c.deaths === 0) && (c.population === null || c.population === 0)),
     );
     const byDeaths = [...informative].sort((a, b) => (b.deaths ?? -1) - (a.deaths ?? -1));
-    const withRate = informative.filter((c) => c.rate !== null && Number.isFinite(c.rate));
+
+    // A partial period's RATE is not comparable with a whole one's: two months
+    // of deaths over a full year's population is low because the year is
+    // young, not because the risk is. Left in, 2026 becomes the "lowest rate"
+    // category and the highest-to-lowest ratio comes out at 6x with a
+    // confidence interval excluding 1 — a statistically significant finding
+    // about the calendar. The counts are honest and stay in byDeaths; only the
+    // rate comparisons drop it. On a non-time dimension no label matches and
+    // this does nothing.
+    const comparable = informative.filter((c) => !isPartialPeriod(c.label));
+    const withRate = comparable.filter((c) => c.rate !== null && Number.isFinite(c.rate));
     const byRate = [...withRate].sort((a, b) => (b.rate ?? 0) - (a.rate ?? 0));
     const highestRate = byRate[0];
     const lowestRate = byRate.length > 1 ? byRate[byRate.length - 1] : undefined;
@@ -336,11 +346,11 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
 
     // Age-adjusted comparison only when every category has one, so the
     // highest/lowest pair is drawn from the same measure throughout.
-    const adjusted = informative.filter(
+    const adjusted = comparable.filter(
       (c) => c.ageAdjustedRate !== null && Number.isFinite(c.ageAdjustedRate),
     );
     const byAdjusted =
-      adjusted.length === informative.length && adjusted.length > 1
+      adjusted.length === comparable.length && adjusted.length > 1
         ? [...adjusted].sort((a, b) => (b.ageAdjustedRate ?? 0) - (a.ageAdjustedRate ?? 0))
         : [];
     const highestAdjusted = byAdjusted[0];

@@ -454,3 +454,73 @@ test("no year-to-date without a partial period or without month detail", () => {
   );
   assert.equal(buildFactSheet(complete, spec(["year", "month"])).ytd, undefined);
 });
+
+test("a partial period is not eligible to be the lowest rate", () => {
+  // Observed on the combined 1999-2026 series: two months of 2026 gave a crude
+  // rate of 2.45 against 14.84 in 2022, so the fact sheet offered a 6.07x
+  // "highest-to-lowest" ratio whose confidence interval excluded 1 — a
+  // statistically significant finding about how far into the year it is. The
+  // model then wrote it up, and the verifier passed it, because every figure
+  // in it was real.
+  const t = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths", "population", "crudeRate"],
+    [
+      [s("2023"), n(49_000), n(334_000_000), n(14.67)],
+      [s("2024"), n(48_824), n(340_000_000), n(14.36)],
+      [s("2025 (provisional)"), n(49_069), n(340_000_000), n(14.43)],
+      [s("2026 (provisional and partial)"), n(8_316), n(340_000_000), n(2.45)],
+    ],
+  );
+  const f = buildFactSheet(t, spec(["year"]));
+  const dim = f.dimensions[0];
+  assert.ok(dim.lowestRate, "there is still a lowest rate");
+  assert.ok(
+    !/partial/i.test(dim.lowestRate.label),
+    `lowest rate was the partial period: ${dim.lowestRate.label}`,
+  );
+  assert.equal(dim.lowestRate.label, "2024");
+  assert.equal(dim.highestRate?.label, "2023");
+  // 14.67 / 14.36, not 14.67 / 2.45.
+  assert.ok(dim.rateRatio !== null && dim.rateRatio < 1.1, `ratio was ${dim.rateRatio}`);
+
+  // And the rendered sheet must not offer the partial period as a comparator.
+  const sheet = renderFactSheet(f);
+  const rateLines = sheet.split("\n").filter((l) => /lowest:/.test(l));
+  assert.ok(rateLines.length > 0);
+  for (const line of rateLines) {
+    assert.ok(!/partial/i.test(line), `partial period offered as a comparator: ${line}`);
+  }
+});
+
+test("the partial period's own count is still reported", () => {
+  // Excluding it from RATE comparisons must not delete it: 8,316 deaths in the
+  // months so far is a true count and the reader should still see it.
+  const t = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths", "population", "crudeRate"],
+    [
+      [s("2024"), n(48_824), n(340_000_000), n(14.36)],
+      [s("2026 (provisional and partial)"), n(8_316), n(340_000_000), n(2.45)],
+    ],
+  );
+  const sheet = renderFactSheet(buildFactSheet(t, spec(["year"])));
+  assert.match(sheet, /8,316/);
+});
+
+test("a result made up entirely of partial periods still renders", () => {
+  // Querying the current year alone leaves nothing comparable behind. The
+  // sheet must lose the rate comparison, not throw or emit a half-built line.
+  const t = makeTable(
+    [{ key: "year", label: "Year" }],
+    ["deaths", "population", "crudeRate"],
+    [[s("2026 (provisional and partial)"), n(8_316), n(340_000_000), n(2.45)]],
+  );
+  const f = buildFactSheet(t, spec(["year"]));
+  assert.equal(f.dimensions[0].highestRate, undefined);
+  assert.equal(f.dimensions[0].lowestRate, undefined);
+  assert.equal(f.dimensions[0].rateRatio, null);
+  const sheet = renderFactSheet(f);
+  assert.match(sheet, /8,316/, "the count survives");
+  assert.ok(!/lowest:/.test(sheet), "no comparison is offered");
+});
