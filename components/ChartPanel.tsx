@@ -9,6 +9,7 @@ import { useMemo, useRef, useState } from "react";
 import Plot, { type PlotHandle } from "./Plot";
 import type { MeasureKey, QuerySpec, ResultTable } from "@/lib/wonder/types";
 import { figureCaption } from "@/lib/describeSpec";
+import { isPartialPeriod } from "@/lib/analysis/facts";
 import {
   cellLabel,
   cellNumber,
@@ -343,15 +344,23 @@ export default function ChartPanel({
     // For bubble sizing, scale marker area to the global max value.
     const globalMax = Math.max(1, ...seriesEntries.flatMap(([, s]) => s.y));
 
+    // Per-point opacity: an incomplete category is drawn faded so the dip it
+    // creates does not read as a real one.
+    const fadePartial = (xs: (string | number)[]) =>
+      xs.some((x) => typeof x === "string" && isPartialPeriod(x))
+        ? xs.map((x) => (typeof x === "string" && isPartialPeriod(x) ? 0.35 : 1))
+        : undefined;
+
     const traces: Record<string, unknown>[] = [];
     let ci = 0;
     const allPairs: [number, number][] = [];
     for (const [name, s] of seriesEntries) {
       const color = colors[ci % colors.length];
       ci++;
+      const opacity = fadePartial(s.x);
       const base: Record<string, unknown> = {
         name,
-        marker: { color, size: chartType === "scatter" ? 9 : undefined },
+        marker: { color, size: chartType === "scatter" ? 9 : undefined, opacity },
         line: { color, shape: smooth && (chartType === "line" || chartType === "area") ? "spline" : "linear", width: 2.5 },
       };
       if (dataLabels && !isPie) {
@@ -409,6 +418,16 @@ export default function ChartPanel({
     return [...captionLines, note];
   }, [captionLines, folded, additive, effectiveTopN]);
 
+  // X categories WONDER marked as incomplete. A partial period plotted like any
+  // other reads as a collapse, so it is called out on the figure itself — the
+  // caption alone is not enough when the shape of the line is what people look
+  // at.
+  const partialX = useMemo(() => {
+    const col = table.columns[xIdx];
+    if (!col || col.kind !== "dimension") return [] as string[];
+    return [...new Set(rows.map((r) => cellLabel(r[xIdx])))].filter(isPartialPeriod);
+  }, [rows, table.columns, xIdx]);
+
   const legend = useMemo(() => {
     if (legendPos === "right") return { orientation: "v" as const, x: 1.02, y: 1, xanchor: "left" as const };
     if (legendPos === "top") return { orientation: "h" as const, y: 1.12, x: 0 };
@@ -454,7 +473,26 @@ export default function ChartPanel({
         l: 70,
       },
       legend,
-      annotations,
+      annotations: [
+        ...annotations,
+        // One marker per incomplete category, pinned to the top of the plot.
+        ...(NO_CARTESIAN.includes(chartType)
+          ? []
+          : partialX.map((label) => ({
+              x: label,
+              xref: "x",
+              yref: "paper",
+              y: 1.02,
+              yanchor: "bottom",
+              showarrow: false,
+              text: "incomplete",
+              font: { size: 9, color: "#b45309" },
+              bgcolor: "rgba(254,243,199,0.9)",
+              bordercolor: "#f59e0b",
+              borderwidth: 1,
+              borderpad: 2,
+            }))),
+      ],
       colorway: PALETTES[palette],
     };
     // 3D scatter uses a `scene` (not cartesian x/y axes).
@@ -479,7 +517,7 @@ export default function ChartPanel({
       xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
       yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
     };
-  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, drawnCaptionLines]);
+  }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, drawnCaptionLines, partialX]);
 
   if (measures.length === 0 || dims.length === 0) {
     return <p className="text-sm text-slate-500">No chartable data.</p>;

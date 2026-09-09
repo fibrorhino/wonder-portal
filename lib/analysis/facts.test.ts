@@ -323,3 +323,82 @@ test("a suppressed category is kept, since its deaths are hidden not absent", ()
   const labels = f.dimensions[0].categories.map((c) => c.label);
   assert.ok(labels.includes("Native Hawaiian or Other Pacific Islander"));
 });
+
+test("year-to-date compares equivalent months and drops the newest one", () => {
+  // Month labels carry the year ("Jan., 2026"), so they only line up across
+  // years once reduced to the month itself.
+  const rows: ResultCell[][] = [];
+  const add = (year: string, month: string, deaths: number) =>
+    rows.push([s(year), s(`${month}, ${year.slice(0, 4)}`), n(deaths)]);
+  for (const [i, m] of ["Jan.", "Feb.", "Mar."].entries()) {
+    add("2025 (provisional)", m, 1000 + i);
+    add("2026 (provisional and partial)", m, 900 + i);
+  }
+
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "month", label: "Month" },
+    ],
+    ["deaths"],
+    rows,
+  );
+  const f = buildFactSheet(table, spec(["year", "month"]));
+  assert.ok(f.ytd);
+
+  // March is the most recent month present, so it is held out of BOTH years.
+  assert.equal(f.ytd.excludedMonth, "Mar");
+  assert.deepEqual(f.ytd.comparedMonths, ["Jan", "Feb"]);
+  assert.equal(f.ytd.previous.deaths, 1000 + 1001);
+  assert.equal(f.ytd.current.deaths, 900 + 901);
+  assert.ok(Math.abs((f.ytd.changePct ?? 0) - ((1801 - 2001) / 2001) * 100) < 1e-9);
+});
+
+test("a year missing one of the compared months is left out of the comparison", () => {
+  const rows: ResultCell[][] = [];
+  const add = (year: string, month: string, deaths: number) =>
+    rows.push([s(year), s(`${month}, 2020`), n(deaths)]);
+  // 2024 has no February, so including it would understate that year purely
+  // because a month is absent.
+  add("2024", "Jan.", 100);
+  add("2024", "Mar.", 100);
+  for (const [i, m] of ["Jan.", "Feb.", "Mar."].entries()) {
+    add("2025 (provisional)", m, 200 + i);
+    add("2026 (provisional and partial)", m, 300 + i);
+  }
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "month", label: "Month" },
+    ],
+    ["deaths"],
+    rows,
+  );
+  const f = buildFactSheet(table, spec(["year", "month"]));
+  assert.ok(f.ytd);
+  assert.deepEqual(
+    f.ytd.series.map((p) => p.label),
+    ["2025 (provisional)", "2026 (provisional and partial)"],
+  );
+});
+
+test("no year-to-date without a partial period or without month detail", () => {
+  const yearOnly = makeTable([{ key: "year", label: "Year" }], ["deaths"], [
+    [s("2025 (provisional)"), n(10)],
+    [s("2026 (provisional and partial)"), n(5)],
+  ]);
+  assert.equal(buildFactSheet(yearOnly, spec(["year"])).ytd, undefined);
+
+  const complete = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "month", label: "Month" },
+    ],
+    ["deaths"],
+    [
+      [s("2023"), s("Jan., 2023"), n(10)],
+      [s("2024"), s("Jan., 2024"), n(11)],
+    ],
+  );
+  assert.equal(buildFactSheet(complete, spec(["year", "month"])).ytd, undefined);
+});

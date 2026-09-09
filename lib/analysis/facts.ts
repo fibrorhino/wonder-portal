@@ -12,7 +12,7 @@
 // ratios are the things that make a table interesting, and none of them are
 // visible by eye.
 
-import type { QuerySpec, ResultTable } from "../wonder/types";
+import type { QuerySpec, ResultCell, ResultTable } from "../wonder/types";
 import {
   cellLabel,
   cellNumber,
@@ -144,6 +144,17 @@ export interface TimeFacts {
   provisionalLabels: string[];
 }
 
+export interface YtdFacts {
+  /** Months compared across years; the most recent month is not among them. */
+  comparedMonths: string[];
+  /** The month held out as under-reported. */
+  excludedMonth: string;
+  series: { label: string; deaths: number }[];
+  current: { label: string; deaths: number };
+  previous: { label: string; deaths: number };
+  changePct: number | null;
+}
+
 export interface CellFact {
   rowLabel: string;
   colLabel: string;
@@ -176,6 +187,8 @@ export interface FactSheet {
   };
   dimensions: DimensionFacts[];
   time?: TimeFacts;
+  /** Like-for-like comparison when a partial period is present. */
+  ytd?: YtdFacts;
   interaction?: InteractionFacts;
   dataQuality: {
     suppressedCells: number;
@@ -489,6 +502,9 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
     };
   }
 
+  // ---- year-to-date ------------------------------------------------------
+  const ytd = buildYtd(rows, dims, deathsIdx);
+
   // ---- interaction (observed vs expected) ---------------------------------
   const interaction = buildInteraction(table, dims, deathsIdx);
 
@@ -527,6 +543,7 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
     },
     dimensions,
     time,
+    ytd: ytd ?? undefined,
     interaction,
     dataQuality: {
       suppressedCells,
@@ -759,6 +776,23 @@ export function renderFactSheet(f: FactSheet): string {
     L.push("");
   }
 
+  if (f.ytd) {
+    const y = f.ytd;
+    L.push("YEAR TO DATE (the only valid way to use the partial year)");
+    L.push(
+      `- Comparing the SAME months across years: ${y.comparedMonths.join(", ")}. ${y.excludedMonth} is deliberately left out of every year because it is the most recent month and death certificates are still being processed for it.`,
+    );
+    for (const p of y.series) {
+      L.push(`- ${p.label}, ${y.comparedMonths.length} months: ${fmt(p.deaths)} deaths`);
+    }
+    if (y.changePct !== null) {
+      L.push(
+        `- ${y.current.label} vs ${y.previous.label} over those months: ${pct(y.changePct)} (${fmt(y.previous.deaths)} to ${fmt(y.current.deaths)}). THIS is the figure to quote for the current year, not the full-year total.`,
+      );
+    }
+    L.push("");
+  }
+
   if (f.interaction && (f.interaction.overRepresented.length || f.interaction.underRepresented.length)) {
     const i = f.interaction;
     L.push(
@@ -837,4 +871,109 @@ export function keyFigures(f: FactSheet): number[] {
     }
   }
   return out;
+}
+
+/**
+ * Year-to-date comparison across equivalent months.
+ *
+ * A partial year cannot be compared with a whole one, but the months it *does*
+ * cover can be compared with the same months of earlier years. That is what
+ * NCHS itself publishes, and it is the only honest way to say anything about
+ * the current year.
+ *
+ * The most recent month is dropped, not included. Death certificates take
+ * weeks to be processed, so the newest month is always materially
+ * under-reported — in the data this was written against, every 2026 month sat
+ * within a few percent of 2025 except the last, which was 22.8% below. Left in,
+ * that lag reads as a fall in deaths.
+ *
+ * Needs the table grouped by year AND month; returns null otherwise.
+ */
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * Month-of-year from a WONDER month label. The labels carry the year —
+ * "Jan., 2024" — so comparing them as strings across years never matches;
+ * only the month part identifies the same point in two different years.
+ */
+function monthOfYear(label: string): number | null {
+  const lower = label.toLowerCase();
+  const i = MONTH_NAMES.findIndex((m) => lower.startsWith(m.toLowerCase()));
+  return i === -1 ? null : i;
+}
+
+function buildYtd(
+  rows: ResultCell[][],
+  dims: ReturnType<typeof dimensionCols>,
+  deathsIdx: number | null,
+): YtdFacts | null {
+  if (deathsIdx === null) return null;
+  const yearDim = dims.find((d) => d.column.variableKey === "year");
+  const monthDim = dims.find((d) => d.column.variableKey === "month");
+  if (!yearDim || !monthDim) return null;
+
+  // deaths[year][month-of-year]
+  const byYear = new Map<string, Map<number, number>>();
+  for (const r of rows) {
+    const y = cellLabel(r[yearDim.index]);
+    const m = monthOfYear(cellLabel(r[monthDim.index]));
+    const v = cellNumber(r[deathsIdx]);
+    if (v === null || m === null) continue;
+    let months = byYear.get(y);
+    if (!months) {
+      months = new Map();
+      byYear.set(y, months);
+    }
+    months.set(m, (months.get(m) ?? 0) + v);
+  }
+
+  const partialYear = [...byYear.keys()].find((y) => isPartialPeriod(y));
+  if (!partialYear) return null;
+
+  const present = [...(byYear.get(partialYear) ?? new Map<number, number>()).keys()].sort(
+    (a, b) => a - b,
+  );
+  if (present.length < 2) return null;
+
+  const excludedIdx = present[present.length - 1];
+  const comparedIdx = present.slice(0, -1);
+  const excludedMonth = MONTH_NAMES[excludedIdx];
+  const comparedMonths = comparedIdx.map((i) => MONTH_NAMES[i]);
+
+  const sumOver = (year: string) => {
+    const months = byYear.get(year);
+    if (!months) return null;
+    // Only years that cover every compared month can take part; a year missing
+    // one of them would appear to have fewer deaths for that reason alone.
+    let total = 0;
+    for (const m of comparedIdx) {
+      const v = months.get(m);
+      if (v === undefined) return null;
+      total += v;
+    }
+    return total;
+  };
+
+  const years = [...byYear.keys()].sort(
+    (a, b) => (numericEncode("year", a) ?? 0) - (numericEncode("year", b) ?? 0),
+  );
+  const series = years
+    .map((label) => ({ label, deaths: sumOver(label) }))
+    .filter((p): p is { label: string; deaths: number } => p.deaths !== null);
+  if (series.length < 2) return null;
+
+  const current = series[series.length - 1];
+  const previous = series[series.length - 2];
+  return {
+    comparedMonths,
+    excludedMonth,
+    series,
+    current,
+    previous,
+    changePct:
+      previous.deaths > 0 ? ((current.deaths - previous.deaths) / previous.deaths) * 100 : null,
+  };
 }

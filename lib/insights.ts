@@ -173,6 +173,20 @@ export function pointsFromFacts(f: FactSheet): string[] {
     }
   }
 
+  // ---- year to date ----
+  //
+  // The only defensible statement about a partial year: the same months,
+  // compared across years, with the newest month left out because certificate
+  // processing has not caught up with it.
+  const y = f.ytd;
+  const change = y?.changePct ?? null;
+  if (y && change !== null) {
+    const dir = change >= 0 ? "up" : "down";
+    points.push(
+      `Year to date — the same ${fmt(y.comparedMonths.length)} months (${y.comparedMonths[0]}–${y.comparedMonths[y.comparedMonths.length - 1]}) in each year — ${y.current.label} is ${dir} ${pct(Math.abs(change))} on ${y.previous.label}: ${fmt(y.current.deaths)} deaths against ${fmt(y.previous.deaths)}. ${y.excludedMonth} is excluded from both, being the most recent month and still incomplete.`,
+    );
+  }
+
   // ---- concentration beyond what the margins predict ----
   const over = f.interaction?.overRepresented?.[0];
   if (over && over.ratio >= 1.3) {

@@ -20,6 +20,7 @@ import ExampleQueries from "@/components/ExampleQueries";
 import RecentQueries from "@/components/RecentQueries";
 import ComparePanel from "@/components/ComparePanel";
 import { clearHistory, loadHistory, recordQuery, type HistoryEntry } from "@/lib/queryHistory";
+import { isPartialPeriod } from "@/lib/analysis/facts";
 
 const INITIAL_SPEC: QuerySpec = {
   database: DEFAULT_DATABASE_ID,
@@ -207,6 +208,26 @@ export default function Home() {
 
   const table = result?.table;
   const isPinnedResult = Boolean(pinned && table && pinned.table === table);
+
+  // A partial period in the result is only comparable month-for-month, and that
+  // needs the data grouped by month. Offered as an explicit button rather than
+  // fetched behind the scenes: it is a second CDC call, and CDC makes you wait
+  // 15 seconds between them.
+  const hasPartialPeriod = Boolean(
+    table &&
+      table.columns.some((c, i) =>
+        c.kind === "dimension" && table.rows.some((r) => isPartialPeriod(r[i]?.raw ?? "")),
+      ),
+  );
+  const canCompareYtd =
+    hasPartialPeriod && !(result?.spec.groupBy ?? []).includes("month");
+
+  const runYearToDate = () => {
+    if (!result?.spec) return;
+    // Year x month is what the like-for-like comparison needs; other groupings
+    // are dropped because five group-by slots will not hold them as well.
+    applyAndRun({ ...result.spec, groupBy: ["year", "month"] });
+  };
 
   // The chart and stats panels address columns by numeric index. When a new
   // query returns a different column layout those indices point at the wrong
@@ -396,6 +417,24 @@ export default function Home() {
                         </span>
                       ))
                     )}
+                  </div>
+                )}
+
+                {canCompareYtd && (
+                  <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-xs text-amber-900">
+                      This result contains a <strong>partial period</strong>. A partial
+                      year cannot be compared with a whole one — but the months it does
+                      cover can be compared with the same months of earlier years.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={runYearToDate}
+                      disabled={loading}
+                      className="shrink-0 rounded-lg border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Compare year-to-date
+                    </button>
                   </div>
                 )}
 

@@ -202,7 +202,35 @@ verifier cannot catch that: the figure is genuinely in the table. So:
   rate for it has a stale denominator;
 - comparing a provisional result against a final one is **refused**, not warned
   about — the overlap differs only by processing lag, and a difference table
-  looks authoritative whatever caption sits above it.
+  looks authoritative whatever caption sits above it;
+- partial periods are drawn faded on charts and tagged "incomplete", because the
+  shape of a line is what people actually read, not the caption.
+
+### Year-to-date is how you use the current year
+
+The months a partial year *does* cover can be compared with the same months of
+earlier years, which is what NCHS itself publishes. A **Compare year-to-date**
+button re-runs the query grouped by year and month and the analysis then reports
+that comparison.
+
+**The most recent month is dropped from every year in it.** Death certificates
+take weeks to process, so the newest month is always badly under-reported. In
+the data this was written against, every 2026 month sat within a few percent of
+2025 — except the last, which was **22.8% below**. Left in, that lag reads as a
+fall in deaths:
+
+| | change |
+| --- | --- |
+| Naive full year (8 months vs 12) | −36.3% — nonsense |
+| Annualised ×12/8 | −4.5% — *plausible and wrong*: deaths peak in winter, and the last month is short |
+| Jan–Aug vs Jan–Aug | −5.3% — honest, but dented by August |
+| **Jan–Jul vs Jan–Jul** | **−2.9% — what the app reports** |
+
+A year missing any of the compared months is excluded from the comparison
+entirely, rather than appearing low because a month is absent.
+
+The button is explicit rather than a background fetch: it is a second CDC call,
+and CDC enforces 15 seconds between them.
 
 ## Talking points and the AI analysis
 
