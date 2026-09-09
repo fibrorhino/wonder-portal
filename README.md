@@ -21,6 +21,10 @@ done with the manual query builder.
 
 ---
 
+> **Working on this with an AI agent?** Start with [`AGENTS.md`](AGENTS.md) — the
+> commands, the rules that protect the live site, and the traps that have already
+> cost a session each. This README is the *why*; that file is the *how*.
+
 ## Quick start (local, for development)
 
 > The live site is at **https://wonderwall.nestadt.org** — see
