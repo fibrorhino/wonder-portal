@@ -246,6 +246,20 @@ entirely, rather than appearing low because a month is absent.
 The button is explicit rather than a background fetch: it is a second CDC call,
 and CDC enforces 15 seconds between them.
 
+### Chart axis types are declared, not inferred
+
+`lib/chartAxes.ts` decides the Plotly axis type, and it is unit-tested because
+getting it wrong loses data with no error anywhere. Left undefined, Plotly
+infers the type from the values — and a list of year labels looks numeric, so it
+picks `linear` and then **silently drops every label that does not parse as a
+number**. On the provisional dataset that removed `2025 (provisional)` and
+`2026 (provisional and partial)` from every trend chart while 2018–2024 stayed:
+the points were in the trace, the axis simply would not plot them.
+
+Category labels therefore get an explicit `type: "category"` everywhere except
+scatter and bubble, which plot a genuine number on x, and horizontal bars, which
+swap the roles of the two axes.
+
 ### Rate precision
 
 `O_precision` is sent as **3**, not WONDER's default of 1. At one decimal place

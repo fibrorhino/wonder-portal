@@ -10,6 +10,7 @@ import Plot, { type PlotHandle } from "./Plot";
 import type { MeasureKey, QuerySpec, ResultTable } from "@/lib/wonder/types";
 import { figureCaption } from "@/lib/describeSpec";
 import { isPartialPeriod } from "@/lib/analysis/facts";
+import { axisTypes } from "@/lib/chartAxes";
 import {
   cellLabel,
   cellNumber,
@@ -510,12 +511,26 @@ export default function ChartPanel({
     // Pie/donut/treemap/sunburst are non-cartesian: no axes or barmode (setting
     // them undefined makes Plotly read `.anchor` on a missing axis and throw).
     if (NO_CARTESIAN.includes(chartType)) return base;
+    // Axis types are decided in lib/chartAxes.ts, which is unit-tested: left
+    // undefined, Plotly infers "linear" from numeric-looking category labels
+    // and silently drops the ones that do not parse.
+    const axes = axisTypes(chartType, logY);
     return {
       ...base,
       barmode: chartType === "stackedBar" ? "stack" : "group",
       hovermode: chartType === "line" || chartType === "area" ? "x unified" : "closest",
-      xaxis: { title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: horizontal && logY ? ("log" as const) : undefined },
-      yaxis: { title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label }, gridcolor: "#eef2f7", zeroline: false, type: !horizontal && logY ? ("log" as const) : undefined },
+      xaxis: {
+        title: { text: horizontal ? yTitle || yCol?.label : xTitle || xCol?.label },
+        gridcolor: "#eef2f7",
+        zeroline: false,
+        type: axes.x,
+      },
+      yaxis: {
+        title: { text: horizontal ? xTitle || xCol?.label : yTitle || yCol?.label },
+        gridcolor: "#eef2f7",
+        zeroline: false,
+        type: axes.y,
+      },
     };
   }, [title, xTitle, yTitle, xCol, yCol, chartType, seriesIdx, horizontal, logY, legend, annotations, palette, table.columns, showFilters, drawnCaptionLines, partialX]);
 
