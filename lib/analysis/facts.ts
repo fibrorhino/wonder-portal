@@ -145,10 +145,12 @@ export interface TimeFacts {
 }
 
 export interface YtdFacts {
-  /** Months compared across years; the most recent month is not among them. */
+  /** Months compared across years, all judged complete enough to count. */
   comparedMonths: string[];
-  /** The month held out as under-reported. */
+  /** The trailing months held out as under-reported, as a readable list. */
   excludedMonth: string;
+  /** Those months individually. */
+  droppedMonths: string[];
   series: { label: string; deaths: number }[];
   current: { label: string; deaths: number };
   previous: { label: string; deaths: number };
@@ -780,7 +782,7 @@ export function renderFactSheet(f: FactSheet): string {
     const y = f.ytd;
     L.push("YEAR TO DATE (the only valid way to use the partial year)");
     L.push(
-      `- Comparing the SAME months across years: ${y.comparedMonths.join(", ")}. ${y.excludedMonth} is deliberately left out of every year because it is the most recent month and death certificates are still being processed for it.`,
+      `- Comparing the SAME months across years: ${y.comparedMonths.join(", ")}. ${y.droppedMonths.join(", ")} ${y.droppedMonths.length === 1 ? "is" : "are"} deliberately left out of EVERY year, because ${y.droppedMonths.length === 1 ? "that month has" : "those months have"} not been fully processed yet — judged against the same month a year earlier, not assumed. Cause-specific coding lags much further behind than the raw death count, so this can reach back several months.`,
     );
     for (const p of y.series) {
       L.push(`- ${p.label}, ${y.comparedMonths.length} months: ${fmt(p.deaths)} deaths`);
@@ -881,14 +883,29 @@ export function keyFigures(f: FactSheet): number[] {
  * NCHS itself publishes, and it is the only honest way to say anything about
  * the current year.
  *
- * The most recent month is dropped, not included. Death certificates take
- * weeks to be processed, so the newest month is always materially
- * under-reported — in the data this was written against, every 2026 month sat
- * within a few percent of 2025 except the last, which was 22.8% below. Left in,
- * that lag reads as a fall in deaths.
+ * Trailing incomplete months are dropped, and how many is decided by the data
+ * rather than assumed. Comparing each month of the partial year against the
+ * same month a year earlier gives an expected level; months that fall far short
+ * of it have not been fully processed yet.
+ *
+ * Assuming "the last month is incomplete" is not enough, and the difference
+ * matters enormously. All-cause deaths lag by about one month. Cause-specific
+ * ones lag far longer, because manner of death needs a coroner or medical
+ * examiner ruling: in the data this was written against, provisional SUICIDE
+ * counts for 2026 ran at 95% of the previous year in January and February, 21%
+ * in March, and were absent from April onward. Dropping only the newest month
+ * there would have compared seven months against seven and reported a ~70%
+ * collapse in suicides.
  *
  * Needs the table grouped by year AND month; returns null otherwise.
  */
+/**
+ * How complete a month must look, against the same month a year earlier, to be
+ * counted. Real year-on-year movement in mortality is a few percent; a month
+ * sitting a fifth below last year has not finished being processed.
+ */
+const COMPLETE_ENOUGH = 0.8;
+
 const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -933,15 +950,43 @@ function buildYtd(
   const partialYear = [...byYear.keys()].find((y) => isPartialPeriod(y));
   if (!partialYear) return null;
 
-  const present = [...(byYear.get(partialYear) ?? new Map<number, number>()).keys()].sort(
-    (a, b) => a - b,
-  );
+  const partialMonths = byYear.get(partialYear) ?? new Map<number, number>();
+  const present = [...partialMonths.keys()].sort((a, b) => a - b);
   if (present.length < 2) return null;
 
-  const excludedIdx = present[present.length - 1];
-  const comparedIdx = present.slice(0, -1);
-  const excludedMonth = MONTH_NAMES[excludedIdx];
+  // The year immediately before the partial one is the yardstick for how
+  // complete each month should look.
+  const orderedYears = [...byYear.keys()].sort(
+    (a, b) => (numericEncode("year", a) ?? 0) - (numericEncode("year", b) ?? 0),
+  );
+  const partialPos = orderedYears.indexOf(partialYear);
+  const baseline = partialPos > 0 ? byYear.get(orderedYears[partialPos - 1]) : undefined;
+
+  // Walk back from the newest month, dropping any that falls short of the
+  // baseline, and stop at the first that looks complete. Without a baseline,
+  // fall back to dropping the newest month alone.
+  let cut = present.length;
+  if (baseline) {
+    while (cut > 0) {
+      const m = present[cut - 1];
+      const expected = baseline.get(m);
+      const actual = partialMonths.get(m) ?? 0;
+      if (expected === undefined || expected <= 0) break;
+      if (actual / expected >= COMPLETE_ENOUGH) break;
+      cut -= 1;
+    }
+  } else {
+    cut = present.length - 1;
+  }
+  // Nothing survived: the lag reaches back past every month available, so no
+  // honest year-to-date statement can be made at all.
+  if (cut < 1) return null;
+
+  const comparedIdx = present.slice(0, cut);
+  const droppedIdx = present.slice(cut);
   const comparedMonths = comparedIdx.map((i) => MONTH_NAMES[i]);
+  const droppedMonths = droppedIdx.map((i) => MONTH_NAMES[i]);
+  const excludedMonth = droppedMonths.join(", ");
 
   const sumOver = (year: string) => {
     const months = byYear.get(year);
@@ -970,6 +1015,7 @@ function buildYtd(
   return {
     comparedMonths,
     excludedMonth,
+    droppedMonths,
     series,
     current,
     previous,

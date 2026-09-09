@@ -324,15 +324,22 @@ test("a suppressed category is kept, since its deaths are hidden not absent", ()
   assert.ok(labels.includes("Native Hawaiian or Other Pacific Islander"));
 });
 
-test("year-to-date compares equivalent months and drops the newest one", () => {
+test("year-to-date drops trailing months that the data shows are incomplete", () => {
   // Month labels carry the year ("Jan., 2026"), so they only line up across
   // years once reduced to the month itself.
+  //
+  // Jan and Feb come in near last year's level; March is a fifth of it, which
+  // is processing lag rather than a real fall, so it is dropped from BOTH
+  // years. How many months go is decided by this comparison, not assumed —
+  // cause-specific coding can lag half a year.
   const rows: ResultCell[][] = [];
   const add = (year: string, month: string, deaths: number) =>
     rows.push([s(year), s(`${month}, ${year.slice(0, 4)}`), n(deaths)]);
+  const prior = [1000, 1001, 1002];
+  const partial = [960, 970, 200];
   for (const [i, m] of ["Jan.", "Feb.", "Mar."].entries()) {
-    add("2025 (provisional)", m, 1000 + i);
-    add("2026 (provisional and partial)", m, 900 + i);
+    add("2025 (provisional)", m, prior[i]);
+    add("2026 (provisional and partial)", m, partial[i]);
   }
 
   const table = makeTable(
@@ -346,12 +353,57 @@ test("year-to-date compares equivalent months and drops the newest one", () => {
   const f = buildFactSheet(table, spec(["year", "month"]));
   assert.ok(f.ytd);
 
-  // March is the most recent month present, so it is held out of BOTH years.
-  assert.equal(f.ytd.excludedMonth, "Mar");
+  assert.deepEqual(f.ytd.droppedMonths, ["Mar"]);
   assert.deepEqual(f.ytd.comparedMonths, ["Jan", "Feb"]);
   assert.equal(f.ytd.previous.deaths, 1000 + 1001);
-  assert.equal(f.ytd.current.deaths, 900 + 901);
-  assert.ok(Math.abs((f.ytd.changePct ?? 0) - ((1801 - 2001) / 2001) * 100) < 1e-9);
+  assert.equal(f.ytd.current.deaths, 960 + 970);
+  assert.ok(Math.abs((f.ytd.changePct ?? 0) - ((1930 - 2001) / 2001) * 100) < 1e-9);
+});
+
+test("a month running close to last year is kept, not dropped for being last", () => {
+  // The old rule always discarded the newest month. When the newest month is
+  // in fact complete, that threw away a month of real data.
+  const rows: ResultCell[][] = [];
+  const add = (year: string, month: string, deaths: number) =>
+    rows.push([s(year), s(`${month}, 2020`), n(deaths)]);
+  for (const [i, m] of ["Jan.", "Feb.", "Mar."].entries()) {
+    add("2025 (provisional)", m, 1000 + i);
+    add("2026 (provisional and partial)", m, 980 + i);
+  }
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "month", label: "Month" },
+    ],
+    ["deaths"],
+    rows,
+  );
+  const f = buildFactSheet(table, spec(["year", "month"]));
+  assert.ok(f.ytd);
+  assert.deepEqual(f.ytd.comparedMonths, ["Jan", "Feb", "Mar"]);
+  assert.deepEqual(f.ytd.droppedMonths, []);
+});
+
+test("no year-to-date when the lag reaches back past every month available", () => {
+  // Suicide coding ran roughly six months behind: only the first month or two
+  // of the partial year were usable. If nothing is usable, saying nothing is
+  // the right answer.
+  const rows: ResultCell[][] = [];
+  const add = (year: string, month: string, deaths: number) =>
+    rows.push([s(year), s(`${month}, 2020`), n(deaths)]);
+  for (const [i, m] of ["Jan.", "Feb.", "Mar."].entries()) {
+    add("2025 (provisional)", m, 4000 + i);
+    add("2026 (provisional and partial)", m, 100 + i);
+  }
+  const table = makeTable(
+    [
+      { key: "year", label: "Year" },
+      { key: "month", label: "Month" },
+    ],
+    ["deaths"],
+    rows,
+  );
+  assert.equal(buildFactSheet(table, spec(["year", "month"])).ytd, undefined);
 });
 
 test("a year missing one of the compared months is left out of the comparison", () => {

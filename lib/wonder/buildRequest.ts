@@ -68,7 +68,12 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   set("O_javascript", "on");
   set("O_location", def.selectors.location);
   set("O_oc-sect1-request", "close");
-  set("O_precision", "1");
+  // Decimal places on returned rates. WONDER's own default is 1, which rounds
+  // any rate below 0.05 to "0.0" — so every rare cause, and every
+  // cause-specific rate in a partial period, arrives as a literal zero and
+  // plots flat on the axis as though nothing happened. Three places keeps them.
+  // Verified against the live API for both databases.
+  set("O_precision", "3");
   set("O_race", def.selectors.race);
   set("O_rate_per", String(spec.options.ratePer ?? 100000));
   set("O_show_totals", spec.options.showTotals === false ? "false" : "true");

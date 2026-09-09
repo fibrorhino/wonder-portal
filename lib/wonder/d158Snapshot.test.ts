@@ -89,7 +89,11 @@ test("every D158 request carries the verified base parameter set", () => {
     assert.deepEqual(p.get("O_location"), ["D158.V9"], c.name);
     assert.deepEqual(p.get("O_urban"), ["D158.V19"], c.name);
     assert.deepEqual(p.get("O_timeout"), ["600"], c.name);
-    assert.deepEqual(p.get("O_precision"), ["1"], c.name);
+    // Changed from "1" to "3" deliberately in Sept 2026, after re-verifying
+    // against the live API for both databases. At 1 decimal place WONDER
+    // returns "0.0" for any rate below 0.05, so rare causes and every
+    // cause-specific rate in a partial period arrived as a literal zero.
+    assert.deepEqual(p.get("O_precision"), ["3"], c.name);
     assert.deepEqual(p.get("O_javascript"), ["on"], c.name);
 
     // Measures M1-M3 are mandatory for every request.

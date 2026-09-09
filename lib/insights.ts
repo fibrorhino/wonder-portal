@@ -183,7 +183,7 @@ export function pointsFromFacts(f: FactSheet): string[] {
   if (y && change !== null) {
     const dir = change >= 0 ? "up" : "down";
     points.push(
-      `Year to date — the same ${fmt(y.comparedMonths.length)} months (${y.comparedMonths[0]}–${y.comparedMonths[y.comparedMonths.length - 1]}) in each year — ${y.current.label} is ${dir} ${pct(Math.abs(change))} on ${y.previous.label}: ${fmt(y.current.deaths)} deaths against ${fmt(y.previous.deaths)}. ${y.excludedMonth} is excluded from both, being the most recent month and still incomplete.`,
+      `Year to date — the same ${fmt(y.comparedMonths.length)} months (${y.comparedMonths[0]}–${y.comparedMonths[y.comparedMonths.length - 1]}) in each year — ${y.current.label} is ${dir} ${pct(Math.abs(change))} on ${y.previous.label}: ${fmt(y.current.deaths)} deaths against ${fmt(y.previous.deaths)}. ${y.droppedMonths.join(", ")} ${y.droppedMonths.length === 1 ? "is" : "are"} excluded from both years, not yet being fully processed.`,
     );
   }
 

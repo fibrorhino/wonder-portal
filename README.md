@@ -213,11 +213,25 @@ earlier years, which is what NCHS itself publishes. A **Compare year-to-date**
 button re-runs the query grouped by year and month and the analysis then reports
 that comparison.
 
-**The most recent month is dropped from every year in it.** Death certificates
-take weeks to process, so the newest month is always badly under-reported. In
-the data this was written against, every 2026 month sat within a few percent of
-2025 — except the last, which was **22.8% below**. Left in, that lag reads as a
-fall in deaths:
+**Trailing incomplete months are dropped from every year in it, and how many is
+decided by the data.** Each month of the partial year is compared with the same
+month a year earlier; months falling below 80% of that level have not finished
+being processed. Assuming "the last month is incomplete" is not enough, because
+the lag depends entirely on what you are counting:
+
+| | lag |
+| --- | --- |
+| All-cause deaths | about one month |
+| **Suicide** | **about six months** — manner of death needs a coroner's ruling |
+
+In the data this was written against, provisional 2026 suicide counts ran at 95%
+of the previous year in January and February, **21% in March, and were absent
+from April onward**. Dropping only the newest month there would have compared
+seven months against seven and reported a ~70% collapse in suicides. The rule
+compares Jan–Jul for all-cause and Jan–Feb for suicide, from the same dataset,
+automatically. When nothing survives, no year-to-date figure is offered at all.
+
+For all-cause deaths the four ways to state the current year:
 
 | | change |
 | --- | --- |
@@ -231,6 +245,17 @@ entirely, rather than appearing low because a month is absent.
 
 The button is explicit rather than a background fetch: it is a second CDC call,
 and CDC enforces 15 seconds between them.
+
+### Rate precision
+
+`O_precision` is sent as **3**, not WONDER's default of 1. At one decimal place
+every rate below 0.05 comes back as `"0.0"`, so rare causes — and every
+cause-specific rate in a partial period — arrived as a literal zero and plotted
+flat on the axis as though nothing had happened. Suicide by drowning in 2026
+reads 0.016 rather than 0.0. Changing this altered the D158 wire request, which
+is why `d158Snapshot.test.ts` carries a dated note explaining the change: that
+test failing is meant to stop you, and the answer was to re-verify against the
+live API, which was done for both databases.
 
 ## Talking points and the AI analysis
 
