@@ -102,6 +102,13 @@ export default function ResultsTable({ table }: { table: ResultTable }) {
         </table>
       </div>
 
+      {table.sourceNotes && table.sourceNotes.length > 0 && (
+        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <span className="font-medium text-slate-700">How this series was assembled: </span>
+          {table.sourceNotes.join(" ")}
+        </div>
+      )}
+
       {table.caveats.length > 0 && (
         <div className="text-xs text-slate-500">
           <button

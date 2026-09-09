@@ -4,8 +4,9 @@
 // normalized ResultTable.
 
 import { NextRequest, NextResponse } from "next/server";
-import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
+import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
 import { getDatabase, isKnownDatabase, variableByKey } from "@/lib/wonder/db/registry";
+import { runComposite } from "@/lib/wonder/composite";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
 import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
 import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "@/lib/wonder/cdcErrors";
@@ -24,7 +25,14 @@ const wonderUrl = (databaseId: string) =>
   `https://wonder.cdc.gov/controller/datarequest/${databaseId}`;
 
 export const runtime = "nodejs";
-export const maxDuration = 60; // allow slow WONDER queries on Vercel
+// A single WONDER query is slow; a combined one is several in series, spaced by
+// CDC's own fifteen-second minimum, and measures around 48s for the three-file
+// span — close enough to 60 that a slow day would trip it. This export only
+// binds on Vercel, where 300 is the fluid-compute ceiling; the self-hosted
+// server this actually runs on has no such limit, but the tunnel in front of it
+// gives up at 100s, which is the real constraint on how many sources a
+// composite can have.
+export const maxDuration = 300;
 
 function validate(spec: QuerySpec): string | null {
   if (!spec || typeof spec !== "object") return "Missing query spec.";
@@ -167,6 +175,36 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(cached);
   }
 
+  // A composite is not a database: it is several, queried in turn and joined.
+  const def = getDatabase(spec.database);
+  const result = def.composite
+    ? await runComposite(spec, def.composite, fetchTable)
+    : await fetchTable(spec);
+
+  if (!result.ok) {
+    log(false, { error: result.error });
+    return NextResponse.json(
+      { ok: false, error: result.error, spec } satisfies WonderResponse,
+      { status: result.status },
+    );
+  }
+
+  const payload: WonderResponse = { ok: true, table: result.table, spec };
+  cacheSet(key, payload);
+  log(true, { cached: false });
+  return NextResponse.json(payload);
+}
+
+/**
+ * Run one spec against its own database and return the parsed table.
+ *
+ * Extracted so the composite series can call it once per source. The retry and
+ * connection handling here was arrived at painfully, and must not be
+ * duplicated.
+ */
+export async function fetchTable(
+  spec: QuerySpec,
+): Promise<{ ok: true; table: ResultTable } | { ok: false; error: string; status: number }> {
   const xmlRequest = buildRequestXml(spec);
   let xml: string;
   try {
@@ -207,28 +245,12 @@ export async function POST(req: NextRequest) {
       // visitor gets wording that makes clear this is CDC's side, not ours.
       const detail = extractError(xml);
       recordCdcFailure(`HTTP ${res.status}: ${detail ?? "(no detail)"}`);
-      log(false, { error: `CDC HTTP ${res.status}` });
-      return NextResponse.json(
-        {
-          ok: false,
-          error: cdcHttpErrorMessage(res.status, detail),
-          spec,
-        } satisfies WonderResponse,
-        { status: 502 },
-      );
+      return { ok: false, error: cdcHttpErrorMessage(res.status, detail), status: 502 };
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     recordCdcFailure(`unreachable: ${msg}`);
-    log(false, { error: `unreachable: ${msg}` });
-    return NextResponse.json(
-      {
-        ok: false,
-        error: cdcNetworkErrorMessage(e),
-        spec,
-      } satisfies WonderResponse,
-      { status: 502 },
-    );
+    return { ok: false, error: cdcNetworkErrorMessage(e), status: 502 };
   }
 
   const wonderError = extractError(xml);
@@ -237,18 +259,9 @@ export async function POST(req: NextRequest) {
     // query, not an outage. Recorded as a success for health purposes so a
     // malformed query cannot make the site look down.
     recordCdcSuccess();
-    log(false, { error: `WONDER rejected: ${wonderError}` });
-    return NextResponse.json(
-      { ok: false, error: `CDC WONDER: ${wonderError}`, spec } satisfies WonderResponse,
-      { status: 502 },
-    );
+    return { ok: false, error: `CDC WONDER: ${wonderError}`, status: 502 };
   }
 
   recordCdcSuccess();
-
-  const table = parseResponse(xml, spec);
-  const payload: WonderResponse = { ok: true, table, spec };
-  cacheSet(key, payload);
-  log(true, { cached: false });
-  return NextResponse.json(payload);
+  return { ok: true, table: parseResponse(xml, spec) };
 }

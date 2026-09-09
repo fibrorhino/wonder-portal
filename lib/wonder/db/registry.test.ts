@@ -32,8 +32,12 @@ test("an unknown dataset falls back rather than throwing", () => {
   assert.equal(isKnownDatabase("D176"), true);
 });
 
-test("every dataset targets its own variables and endpoint id", () => {
+test("every real dataset targets its own variables and endpoint id", () => {
   for (const db of DATABASES) {
+    // A composite has no endpoint and builds no request: it borrows the newer
+    // files' variable definitions, and each source translates them to its own
+    // numbering, so its varCodes deliberately name another database.
+    if (db.composite) continue;
     for (const v of db.variables) {
       assert.ok(
         v.varCode.startsWith(`${db.id}.`),

@@ -243,6 +243,13 @@ export function pointsFromFacts(f: FactSheet): string[] {
     );
   }
 
+  // A stitched series says so. Which file supplied which years changes how a
+  // step at a boundary should be read, and a rate computed here must never be
+  // passed off as one CDC published.
+  if (f.sourceNotes.length > 0) {
+    caveats.push(`This series was assembled from more than one file. ${f.sourceNotes.join(" ")}`);
+  }
+
   // Provisional warnings lead the caveats: they change how every figure above
   // should be read, so they must never be the thing a trim drops.
   return [...points.slice(0, 8), ...caveatsProvisional, ...caveats];

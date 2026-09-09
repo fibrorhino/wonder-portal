@@ -157,14 +157,14 @@ filter: it changes which variables exist, which measures are available, and how
 the numbers must be read, so switching rebuilds the query rather than carrying
 the old one over.
 
-| | `D158` Final | `D176` Provisional | `D76` Historical |
-| --- | --- | --- | --- |
-| Years | 2018–2024 | 2018–present | **1999–2020** |
-| Grammar | expanded | expanded | **classic** |
-| Age-adjusted rate | yes | **no** (`M_4` absent) | yes |
-| Race | single, 6/15/31 | single, 6/15 | **bridged, 4** |
-| Weekday / autopsy | yes | no | yes |
-| Education / 15-leading-causes | yes | no | no |
+| | `D158` Final | `D176` Provisional | `D76` Historical | `COMBINED` |
+| --- | --- | --- | --- | --- |
+| Years | 2018–2024 | 2018–present | **1999–2020** | **1999–present** |
+| Grammar | expanded | expanded | **classic** | n/a (composite) |
+| Age-adjusted rate | yes | **no** (`M_4` absent) | yes | yes, computed past 2024 |
+| Race | single, 6/15/31 | single, 6/15 | **bridged, 4** | **none** |
+| Weekday / autopsy | yes | no | yes | no |
+| Education / 15-leading-causes | yes | no | no | no |
 
 **Race does not carry across.** D76 uses the four *bridged* categories — deaths
 recorded under multiple races assigned to one, and Asian merged with Pacific
@@ -193,6 +193,57 @@ exercise; expect it to take a session, not an afternoon.
 rather than copying it. That module is the result of months of verification
 against the live API and re-typing it would risk a silent transcription error in
 exactly the values hardest to notice being wrong.
+
+### The combined series
+
+`COMBINED` is not a database. It is a **composite**: one query against it
+becomes one query per source file, each asked only for the years it covers, and
+the results are concatenated (`lib/wonder/composite.ts`, `lib/wonder/stitch.ts`).
+Cut points are 1999–2017 from D76, 2018–2024 from D158, 2025 on from D176.
+
+The overlap is what makes this defensible. D76 and D158 both cover 2018–2020,
+and for those years they return **identical** deaths, population and
+age-adjusted rates — so the join is not reconciling two estimates, it is
+choosing which vintage to read a year from. The later, final file wins wherever
+it has the year, since later vintages carry later corrections; provisional data
+is used only where nothing final exists.
+
+Two things are given up to get the span:
+
+**Race is not offered at all.** D76's bridged categories are not the newer
+files' single-race ones. Measured on the 2018–2020 overlap, where the same
+141,834 suicides are coded both ways, simply collapsing the newer categories
+understates American Indian or Alaska Native by 13.3% and Asian or Pacific
+Islander by 9.5%. Hispanic origin *is* consistent across all three and is
+available.
+
+**Age-adjusted rates past 2024 are computed here, not published.** D176 does
+not publish the measure, so `lib/stats/ageAdjust.ts` does it by direct
+standardisation to the 2000 US standard population: the composite issues one
+extra query with age added to the grouping and standardises over the strata.
+Validated against the years CDC does publish, the method agrees to within 0.02
+per 100,000 (2022: 14.240 computed vs 14.221 published; 2023: 14.131 vs 14.129;
+2024: 13.737 vs 13.732 — the residual is WONDER rounding the age-specific rates
+it standardises over). The 2024 case is pinned in `stitch.test.ts`.
+
+An age group **absent** from the strata counts as zero deaths, not as missing
+data. WONDER omits age groups with no records, so a suicide query returns
+nothing at all for under-5s; rescaling by the range that came back would assume
+infants die of suicide at the same rate as everyone else. Below 80% coverage of
+the standard population no rate is returned at all, rather than a different
+number wearing the name.
+
+Because these figures are not CDC's, they are never presented as though they
+were. `ResultTable.sourceNotes` is deliberately separate from `caveats` (which
+are CDC's own words returned with the data), renders above them as *"How this
+series was assembled"*, and is fed to the AI fact sheet so the narration cannot
+cite a computed rate as a published one.
+
+Cost: three or four sequential requests, spaced by CDC's own fifteen-second
+minimum — about 35–50 seconds. The loading state says so, because otherwise it
+reads as a hang. `lib/wonder/composite.test.ts` drives the whole path against a
+stub fetcher, so year-slicing, the companion age query, the join and the notes
+are checked on every run without spending a CDC call.
 
 ### Not breaking the working dataset
 

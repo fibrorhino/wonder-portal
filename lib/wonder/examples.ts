@@ -115,10 +115,32 @@ export const EXAMPLE_QUERIES: ExampleQuery[] = [
  * measures are narrowed to what the dataset publishes (no age-adjusted rate
  * for provisional data).
  */
+/**
+ * Extra chips for the combined series.
+ *
+ * The general examples all work against it, but none of them shows the one
+ * thing it can do that no single file can: a quarter century in one line. It
+ * leads, so that is the first thing a visitor clicks.
+ */
+const COMBINED_EXAMPLES: ExampleQuery[] = [
+  {
+    label: "Suicide rate since 1999",
+    hint: "The full span, age-adjusted",
+    spec: {
+      ...BASE,
+      groupBy: ["year"],
+      filters: { injuryIntent: ["2"] },
+    },
+  },
+  // Deliberately just the one. "Suicide by method" already becomes the long
+  // method trend on this dataset, and the chip row wraps past eight.
+];
+
 export function examplesFor(databaseId: string): ExampleQuery[] {
   const db = getDatabase(databaseId);
   const available = new Set(db.variables.map((v) => v.key));
-  return EXAMPLE_QUERIES.filter((e) => {
+  const extra = db.composite ? COMBINED_EXAMPLES : [];
+  return [...extra, ...EXAMPLE_QUERIES].filter((e) => {
     const used = [...e.spec.groupBy, ...Object.keys(e.spec.filters)];
     return used.every((k) => available.has(k));
   }).map((e) => ({

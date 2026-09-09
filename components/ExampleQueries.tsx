@@ -20,7 +20,10 @@ export default function ExampleQueries({
   return (
     <div>
       <p className="mb-2 text-xs font-medium text-slate-500">Start from an example</p>
-      <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-x-visible sm:pb-0">
+      {/* One line that scrolls, at every width, matching the recent-query row
+          directly below it. It used to wrap at sm: and up, which put a lone
+          chip on a second row as soon as there were eight of them. */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
         {examples.map((e) => (
           <button
             key={e.label}

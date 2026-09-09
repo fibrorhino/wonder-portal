@@ -209,6 +209,8 @@ export interface FactSheet {
     totalRows: number;
   };
   caveats: string[];
+  /** How a stitched series was assembled; empty for a single-database query. */
+  sourceNotes: string[];
   /** Compact rendering of the underlying rows, for context. */
   sample: { header: string[]; rows: string[][]; truncated: number };
 }
@@ -578,6 +580,7 @@ export function buildFactSheet(table: ResultTable, spec?: QuerySpec): FactSheet 
       totalRows: rows.length,
     },
     caveats: table.caveats ?? [],
+    sourceNotes: table.sourceNotes ?? [],
     sample: {
       header,
       rows: sampleRows,

@@ -85,6 +85,12 @@ export interface DatabaseDef {
   supportsDisplayToggles: boolean;
   /** Cause-of-death ICD code presets offered in the builder. */
   icdPresets: { label: string; codes: string[] }[];
+  /**
+   * Set when this is not a real database but a series stitched from several.
+   * A composite has no endpoint: the API route translates one query against it
+   * into one query per source.
+   */
+  composite?: { databaseId: string; from: number; to: number | null }[];
 }
 
 export function variableByKey(db: DatabaseDef): Record<string, VariableDef> {

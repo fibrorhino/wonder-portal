@@ -52,6 +52,12 @@ export interface ResultTable {
   rows: ResultCell[][]; // aligned with columns
   rowIsTotal: boolean[]; // per-row: WONDER subtotal / grand-total row
   caveats: string[];
+  /**
+   * Notes about how this table was assembled, as opposed to `caveats`, which
+   * are CDC's own words returned with the data. Kept separate so a note saying
+   * a figure was computed here is never displayed as though CDC said it.
+   */
+  sourceNotes?: string[];
   title?: string;
   rowCount: number; // count of data (non-total) rows
 }

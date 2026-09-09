@@ -9,6 +9,7 @@
 import * as d158 from "../databases";
 import { D176 } from "./d176";
 import { D76 } from "./d76";
+import { COMBINED } from "./combined";
 import type { DatabaseDef } from "./types";
 
 export const D158: DatabaseDef = {
@@ -46,7 +47,7 @@ export const D158: DatabaseDef = {
 
 // Newest-first: the final file is the default, provisional adds recency,
 // and the classic file adds twenty years of history.
-export const DATABASES: DatabaseDef[] = [D158, D176, D76];
+export const DATABASES: DatabaseDef[] = [D158, D176, D76, COMBINED];
 
 export const DEFAULT_DATABASE_ID = D158.id;
 
