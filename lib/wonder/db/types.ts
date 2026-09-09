@@ -44,7 +44,29 @@ export interface DatabaseDef {
    * variable families through a radio selector; without the right default the
    * query silently returns nothing.
    */
-  selectors: { age: string; race: string; location: string; urban: string; ucd: string };
+  selectors: {
+    age?: string;
+    /** Absent on the classic grammar, which has no race selector at all. */
+    race?: string;
+    location?: string;
+    urban?: string;
+    ucd?: string;
+  };
+  /**
+   * Which parameter dialect this database speaks.
+   *
+   * "expanded" (D158, D176) wants dataset_code, dataset_label, saved_id,
+   * O_dates, O_race and O_oc-sect1-request. "classic" (D76, the 1999-2020 file)
+   * has none of them, and sending them is not worth the risk when its own
+   * template shows exactly what it expects.
+   */
+  grammar: "expanded" | "classic";
+  /**
+   * The variables crossed into the age-adjustment block (VM_<db>.M6_<db>.<var>).
+   * The race variable differs: single race V42 on the newer files, bridged
+   * race V8 on the classic one.
+   */
+  ageAdjustVars: string[];
   /**
    * Extra name/value parameters this database requires verbatim. D176 needs
    * O_PR, and rejects the request without it.

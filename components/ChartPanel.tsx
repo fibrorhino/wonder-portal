@@ -452,7 +452,10 @@ export default function ChartPanel({
           const nx = typeof xv === "number" ? xv : numericEncode(xCol?.variableKey, label);
           if (nx !== null) pts.push({ x: nx, y: s2.y[j], label });
         });
-        const fit = fitTrend(pts, trendMode === "joinpoint" ? 2 : 0);
+        // Up to three bends; fitTrend caps it further by series length and BIC
+        // refuses any that do not pay for themselves. Twenty-two years of
+        // history can support three; eight years cannot support two.
+        const fit = fitTrend(pts, trendMode === "joinpoint" ? 3 : 0);
         if (!fit) continue;
         const color = colors[i % colors.length];
         traces.push({

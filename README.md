@@ -157,12 +157,27 @@ filter: it changes which variables exist, which measures are available, and how
 the numbers must be read, so switching rebuilds the query rather than carrying
 the old one over.
 
-| | `D158` Final | `D176` Provisional |
-| --- | --- | --- |
-| Years | 2018–2024 | 2018–present |
-| Age-adjusted rate | yes | **no** (`M_4` does not exist) |
-| Weekday / education / 15-leading-causes / autopsy / 31-race | yes | **no** |
-| Recent periods | final | incomplete, revised upward |
+| | `D158` Final | `D176` Provisional | `D76` Historical |
+| --- | --- | --- | --- |
+| Years | 2018–2024 | 2018–present | **1999–2020** |
+| Grammar | expanded | expanded | **classic** |
+| Age-adjusted rate | yes | **no** (`M_4` absent) | yes |
+| Race | single, 6/15/31 | single, 6/15 | **bridged, 4** |
+| Weekday / autopsy | yes | no | yes |
+| Education / 15-leading-causes | yes | no | no |
+
+**Race does not carry across.** D76 uses the four *bridged* categories — deaths
+recorded under multiple races assigned to one, and Asian merged with Pacific
+Islander. The newer files use single-race categories and split those two. The
+app therefore keys it `raceBridged`, not `race6`, so a spec written for one file
+cannot silently run against the other, and cross-dataset comparison is refused.
+
+**Two parameter dialects.** The classic grammar (`D76`) has no `dataset_code`,
+`dataset_label`, `saved_id`, `O_dates` or `O_race` — race is a plain value
+variable there rather than a selector, and the age-adjustment block crosses
+`V8` where the newer files cross `V42`. `DatabaseDef.grammar` picks the dialect;
+`registry.test.ts` asserts the classic request carries none of the modern
+parameters and no other database's ids.
 
 **Every WONDER database is a separate API.** The numbering differs, the required
 parameters differ, and nothing is documented. D176 rejects a D158-shaped request

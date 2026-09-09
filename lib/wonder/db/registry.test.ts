@@ -4,6 +4,7 @@ import type { QuerySpec } from "../types";
 import { buildRequestXml, measureColumns } from "../buildRequest";
 import { DATABASES, D158, getDatabase, isKnownDatabase } from "./registry";
 import { D176 } from "./d176";
+import { D76 } from "./d76";
 
 const spec = (over: Partial<QuerySpec> = {}): QuerySpec => ({
   database: "D176",
@@ -100,4 +101,57 @@ test("the provisional dataset covers more years than the final one", () => {
   );
   assert.equal(D176.provisional, true);
   assert.equal(D158.provisional, false);
+});
+
+test("the classic grammar omits the parameters it does not have", () => {
+  const classic = params(
+    buildRequestXml({
+      database: "D76",
+      groupBy: ["year"],
+      measures: ["deaths", "population", "crudeRate", "ageAdjustedRate"],
+      filters: {},
+      options: { showTotals: true, showZeros: true, showSuppressed: true, ratePer: 100000 },
+    }),
+  );
+  // D76's own template carries none of these, and it is a different API.
+  for (const absent of [
+    "dataset_code",
+    "dataset_label",
+    "saved_id",
+    "O_dates",
+    "O_race",
+    "O_oc-sect1-request",
+  ]) {
+    assert.equal(classic.get(absent), undefined, `${absent} must not be sent to D76`);
+  }
+  // Bridged race stands where the newer files use single race.
+  assert.ok(classic.has("V_D76.V8"));
+  assert.ok(classic.has("VM_D76.M6_D76.V8"));
+  assert.equal(classic.get("VM_D76.M6_D76.V42"), undefined);
+  // It does support age-adjusted rates, verified live.
+  assert.deepEqual(classic.get("M_4"), ["D76.M4"]);
+  assert.deepEqual(classic.get("O_aar"), ["aar_std"]);
+  for (const name of classic.keys()) assert.ok(!/D1(58|76)/.test(name), `leaked ${name}`);
+});
+
+test("bridged race is a distinct variable, not race6 under another label", () => {
+  // A spec written against the single-race files must not silently run here:
+  // bridged race merges Asian with Pacific Islander and assigns multi-race
+  // deaths to one group, so the categories are not the same thing.
+  const keys = new Set(D76.variables.map((v) => v.key));
+  assert.ok(keys.has("raceBridged"));
+  assert.ok(!keys.has("race6"));
+  assert.ok(!keys.has("race15"));
+  const race = D76.variables.find((v) => v.key === "raceBridged");
+  assert.equal(race?.values.length, 4);
+  assert.ok(race?.values.some((v) => v.label === "Asian or Pacific Islander"));
+});
+
+test("the three datasets between them span 1999 to the present", () => {
+  assert.equal(D76.years[0], "1999");
+  assert.equal(D76.years[D76.years.length - 1], "2020");
+  assert.equal(D158.years[0], "2018");
+  // The classic file overlaps the newer ones, which is what makes the join
+  // checkable rather than assumed.
+  assert.ok(Number(D76.years[D76.years.length - 1]) >= Number(D158.years[0]));
 });

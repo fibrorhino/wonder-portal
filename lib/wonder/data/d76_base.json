@@ -1,0 +1,222 @@
+{
+  "accept_datause_restrictions": [
+    "true"
+  ],
+  "B_1": [
+    "D76.V1-level1"
+  ],
+  "B_2": [
+    "*None*"
+  ],
+  "B_3": [
+    "*None*"
+  ],
+  "B_4": [
+    "*None*"
+  ],
+  "B_5": [
+    "*None*"
+  ],
+  "F_D76.V1": [
+    "*All*"
+  ],
+  "F_D76.V10": [
+    "*All*"
+  ],
+  "F_D76.V2": [
+    "*All*"
+  ],
+  "F_D76.V27": [
+    "*All*"
+  ],
+  "F_D76.V9": [
+    "*All*"
+  ],
+  "I_D76.V1": [
+    "*All*"
+  ],
+  "I_D76.V10": [
+    "*All* (The United States)"
+  ],
+  "I_D76.V2": [
+    "*All*"
+  ],
+  "I_D76.V27": [
+    "*All* (The United States)"
+  ],
+  "I_D76.V9": [
+    "*All* (The United States)"
+  ],
+  "M_1": [
+    "D76.M1"
+  ],
+  "M_2": [
+    "D76.M2"
+  ],
+  "M_3": [
+    "D76.M3"
+  ],
+  "O_V10_fmode": [
+    "freg"
+  ],
+  "O_V1_fmode": [
+    "freg"
+  ],
+  "O_V27_fmode": [
+    "freg"
+  ],
+  "O_V2_fmode": [
+    "freg"
+  ],
+  "O_V9_fmode": [
+    "freg"
+  ],
+  "O_aar": [
+    "aar_none"
+  ],
+  "O_aar_pop": [
+    "0000"
+  ],
+  "O_age": [
+    "D76.V5"
+  ],
+  "O_javascript": [
+    "on"
+  ],
+  "O_location": [
+    "D76.V9"
+  ],
+  "O_precision": [
+    "1"
+  ],
+  "O_rate_per": [
+    "100000"
+  ],
+  "O_show_totals": [
+    "false"
+  ],
+  "O_timeout": [
+    "300"
+  ],
+  "O_title": [
+    "Default Query List"
+  ],
+  "O_ucd": [
+    "D76.V2"
+  ],
+  "O_urban": [
+    "D76.V19"
+  ],
+  "VM_D76.M6_D76.V10": [
+    ""
+  ],
+  "VM_D76.M6_D76.V17": [
+    "*All*"
+  ],
+  "VM_D76.M6_D76.V1_S": [
+    "*All*"
+  ],
+  "VM_D76.M6_D76.V7": [
+    "*All*"
+  ],
+  "VM_D76.M6_D76.V8": [
+    "*All*"
+  ],
+  "V_D76.V1": [
+    ""
+  ],
+  "V_D76.V10": [
+    ""
+  ],
+  "V_D76.V11": [
+    "*All*"
+  ],
+  "V_D76.V12": [
+    "*All*"
+  ],
+  "V_D76.V17": [
+    "*All*"
+  ],
+  "V_D76.V19": [
+    "*All*"
+  ],
+  "V_D76.V2": [
+    ""
+  ],
+  "V_D76.V20": [
+    "*All*"
+  ],
+  "V_D76.V21": [
+    "*All*"
+  ],
+  "V_D76.V22": [
+    "*All*"
+  ],
+  "V_D76.V23": [
+    "*All*"
+  ],
+  "V_D76.V24": [
+    "*All*"
+  ],
+  "V_D76.V25": [
+    "*All*"
+  ],
+  "V_D76.V27": [
+    ""
+  ],
+  "V_D76.V4": [
+    "*All*"
+  ],
+  "V_D76.V5": [
+    "1",
+    "1-4",
+    "5-14",
+    "15-24",
+    "25-34",
+    "35-44",
+    "45-54",
+    "55-64",
+    "65-74",
+    "75-84",
+    "85+"
+  ],
+  "V_D76.V51": [
+    "*All*"
+  ],
+  "V_D76.V52": [
+    "*All*"
+  ],
+  "V_D76.V6": [
+    "00"
+  ],
+  "V_D76.V7": [
+    "*All*"
+  ],
+  "V_D76.V8": [
+    "*All*"
+  ],
+  "V_D76.V9": [
+    ""
+  ],
+  "action-Send": [
+    "Send"
+  ],
+  "finder-stage-D76.V1": [
+    "codeset"
+  ],
+  "finder-stage-D76.V10": [
+    "codeset"
+  ],
+  "finder-stage-D76.V2": [
+    "codeset"
+  ],
+  "finder-stage-D76.V27": [
+    "codeset"
+  ],
+  "finder-stage-D76.V9": [
+    "codeset"
+  ],
+  "stage": [
+    "request"
+  ]
+}

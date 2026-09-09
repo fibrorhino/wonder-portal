@@ -8,6 +8,7 @@
 
 import * as d158 from "../databases";
 import { D176 } from "./d176";
+import { D76 } from "./d76";
 import type { DatabaseDef } from "./types";
 
 export const D158: DatabaseDef = {
@@ -36,12 +37,16 @@ export const D158: DatabaseDef = {
     urban: "D158.V19",
     ucd: "D158.V2",
   },
+  grammar: "expanded",
+  ageAdjustVars: ["V10", "V17", "V1_S", "V42", "V7"],
   extraParams: {},
   supportsDisplayToggles: true,
   icdPresets: d158.ICD_PRESETS,
 };
 
-export const DATABASES: DatabaseDef[] = [D158, D176];
+// Newest-first: the final file is the default, provisional adds recency,
+// and the classic file adds twenty years of history.
+export const DATABASES: DatabaseDef[] = [D158, D176, D76];
 
 export const DEFAULT_DATABASE_ID = D158.id;
 

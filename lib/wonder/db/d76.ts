@@ -1,28 +1,28 @@
-// Provisional Mortality Statistics (WONDER database D176).
+// Underlying Cause of Death, 1999-2020 (WONDER database D76).
 //
-// The reason to have it: it runs from 2018 through last month, so it carries
-// the two most recent years that the final file (D158) does not. The price is
-// that the newest data is incomplete and will be revised.
+// The reason to have it: twenty-two years of history. D158 starts at 2018,
+// which is too short a run for a trend, let alone a joinpoint fit. Together the
+// two cover 1999 to the present, though not in one query — see the note on
+// race below for why they should not simply be concatenated.
 //
-// Everything here was established against the live endpoint, because none of it
-// is documented:
-//   - The published D176 request template from 2022 is now rejected with
-//     "Missing parameter O_PR, needed for stored procedure." Adding O_PR=false
-//     makes it work. That parameter does not exist in D158 at all.
-//   - There is no M_4: D176 returns deaths, population and crude rate only.
-//     Age-adjusted rates are not available for provisional data.
-//   - Its variable set is not D158's. There is no weekday (V24), no education
-//     (V45) and no 15-leading-causes (V28). It adds multiple-cause-of-death and
-//     occurrence-geography variables that this app does not yet expose.
-//   - A stale dataset_vintage was accepted, so it is sent as-is rather than
-//     being discovered per request.
+// This is the CLASSIC parameter grammar, and it is genuinely a different API
+// from D158's. It has no dataset_code, no dataset_label, no saved_id, no
+// O_dates and no O_race, and sending those is not worth the risk when its own
+// template shows exactly what it wants. Verified against the live endpoint: the
+// published template returns data unchanged, and adding M_4 with O_aar=aar_std
+// returns age-adjusted rates.
 //
-// The demographic value codes (sex, age, race, Hispanic origin, injury intent
-// and mechanism) are WONDER-wide code sets and are reused from the D158
-// metadata; that reuse is verified by a live query in the notes for this file.
+// RACE IS NOT COMPARABLE WITH THE NEWER FILES. D76 uses the four BRIDGED race
+// categories (White; Black or African American; American Indian or Alaska
+// Native; Asian or Pacific Islander), where deaths recorded under multiple
+// races are bridged back to one. D158 uses single-race categories and splits
+// Asian from Native Hawaiian or Other Pacific Islander. A "Asian or Pacific
+// Islander" figure here and an "Asian" figure there are different
+// denominators and different numerators, so the app exposes this variable under
+// its own key and the cross-dataset comparison guard keeps the two apart.
 
 import rawMeta from "../data/d158_variables.json";
-import baseParams from "../data/d176_base.json";
+import baseParams from "../data/d76_base.json";
 import type { VariableDef, VariableValue } from "../databases";
 import { ICD_PRESETS } from "../databases";
 import type { DatabaseDef } from "./types";
@@ -30,27 +30,29 @@ import type { DatabaseDef } from "./types";
 type RawMeta = Record<string, { label: string; values: { code: string; label: string }[] }>;
 const META = rawMeta as RawMeta;
 
-const DB = "D176";
+const DB = "D76";
 
-/**
- * Value lists come from the D158 metadata because these are shared WONDER code
- * sets — "M"/"F" for sex, "2106-3" for White, "2" for suicide — not per-database
- * inventions. Verified live: a D176 query grouped by sex and race returns the
- * same labels for the same codes.
- */
+/** Shared WONDER code sets: sex, age, Hispanic origin, injury intent/mechanism. */
 function valuesFor(d158VarCode: string): VariableValue[] {
   return META[d158VarCode]?.values ?? [];
 }
 
-/** 2018 through the current year; the last two are provisional. */
-const YEARS = (() => {
-  const thisYear = new Date().getUTCFullYear();
-  const out: string[] = [];
-  for (let y = 2018; y <= thisYear; y++) out.push(String(y));
-  return out;
-})();
+const YEARS = Array.from({ length: 2020 - 1999 + 1 }, (_, i) => String(1999 + i));
+
+/**
+ * Bridged race, D76.V8. Verified live by grouping on it: the four labels come
+ * back exactly as below, and all four codes appear in the response's echo of
+ * the request.
+ */
+const BRIDGED_RACE: VariableValue[] = [
+  { code: "1002-5", label: "American Indian or Alaska Native" },
+  { code: "A-PI", label: "Asian or Pacific Islander" },
+  { code: "2054-5", label: "Black or African American" },
+  { code: "2106-3", label: "White" },
+];
 
 const VARIABLES: VariableDef[] = [
+  // ---- Time ----
   {
     key: "year",
     label: "Year",
@@ -71,8 +73,19 @@ const VARIABLES: VariableDef[] = [
     canGroup: true,
     canFilter: false,
     group: "Time",
-    note: "Groups by year + month. The most recent months are the least complete.",
+    note: "Groups by year + month.",
     values: [],
+  },
+  {
+    key: "weekday",
+    label: "Weekday of Death",
+    varCode: `${DB}.V24`,
+    filterMode: "value",
+    groupToken: `${DB}.V24`,
+    canGroup: true,
+    canFilter: true,
+    group: "Time",
+    values: valuesFor("D158.V24"),
   },
   // ---- Demographics ----
   {
@@ -134,28 +147,18 @@ const VARIABLES: VariableDef[] = [
     values: valuesFor("D158.V17"),
   },
   {
-    key: "race6",
-    label: "Race (Single Race, 6 groups)",
-    varCode: `${DB}.V42`,
+    // Deliberately NOT keyed "race6": the categories are bridged, not single
+    // race, so a spec written for one file must not silently run on the other.
+    key: "raceBridged",
+    label: "Race (Bridged, 4 groups)",
+    varCode: `${DB}.V8`,
     filterMode: "value",
-    groupToken: `${DB}.V42`,
+    groupToken: `${DB}.V8`,
     canGroup: true,
     canFilter: true,
-    control: { param: "O_race", value: `${DB}.V42` },
     group: "Demographics",
-    values: valuesFor("D158.V42"),
-  },
-  {
-    key: "race15",
-    label: "Race (Single Race, 15 groups)",
-    varCode: `${DB}.V43`,
-    filterMode: "value",
-    groupToken: `${DB}.V43`,
-    canGroup: true,
-    canFilter: true,
-    control: { param: "O_race", value: `${DB}.V43` },
-    group: "Demographics",
-    values: valuesFor("D158.V43"),
+    note: "Bridged race: deaths recorded under multiple races are assigned to one. Not comparable with the single-race categories in the 2018-onward files.",
+    values: BRIDGED_RACE,
   },
   // ---- Cause of death ----
   {
@@ -196,6 +199,17 @@ const VARIABLES: VariableDef[] = [
     values: valuesFor("D158.V21"),
   },
   {
+    key: "autopsy",
+    label: "Autopsy",
+    varCode: `${DB}.V20`,
+    filterMode: "value",
+    groupToken: `${DB}.V20`,
+    canGroup: true,
+    canFilter: true,
+    group: "Cause of death",
+    values: valuesFor("D158.V20"),
+  },
+  {
     key: "ucdCause",
     label: "Underlying Cause (ICD-10 codes)",
     varCode: `${DB}.V2`,
@@ -210,48 +224,36 @@ const VARIABLES: VariableDef[] = [
   },
 ];
 
-export const D176: DatabaseDef = {
+export const D76: DatabaseDef = {
   id: DB,
-  label: "Provisional Mortality Statistics, 2018 through Last Month",
-  shortLabel: "Provisional mortality (2018–present)",
+  label: "Underlying Cause of Death, 1999-2020",
+  shortLabel: "Historical mortality (1999–2020)",
   blurb:
-    "Includes the two most recent years, which the final file does not. The newest periods are incomplete and will be revised upward.",
-  datasetLabel: "Provisional Mortality Statistics, 2018 through Last Month",
+    "Twenty-two years of final data — long enough for a real trend. Uses bridged race categories, which are not comparable with the single-race ones in the newer files.",
+  // The classic grammar sends no dataset_label; kept for display only.
+  datasetLabel: "Underlying Cause of Death, 1999-2020",
   years: YEARS,
-  provisional: true,
+  provisional: false,
   variables: VARIABLES,
-  // No M_4: age-adjusted rates are not published for provisional data.
-  measures: ["deaths", "population", "crudeRate"],
+  measures: ["deaths", "population", "crudeRate", "ageAdjustedRate"],
   finderVars: ["V1", "V2", "V9", "V10", "V27"],
   valueVars: [
-    "V11", "V12", "V17", "V19", "V20", "V21", "V22", "V23",
-    "V25", "V4", "V42", "V43", "V44", "V5", "V51", "V52", "V7",
+    "V11", "V12", "V17", "V19", "V2", "V20", "V21", "V22", "V23", "V24",
+    "V25", "V4", "V5", "V51", "V52", "V7", "V8", "V9",
   ],
   selectors: {
     age: `${DB}.V5`,
-    race: `${DB}.V42`,
+    // No race selector exists on this grammar; race is a plain value variable.
     location: `${DB}.V9`,
     urban: `${DB}.V19`,
     ucd: `${DB}.V2`,
   },
-  grammar: "expanded",
-  ageAdjustVars: ["V10", "V17", "V1_S", "V42", "V7"],
-  extraParams: {
-    // Required, and absent from D158 entirely — without it the request is
-    // rejected with "Missing parameter O_PR, needed for stored procedure."
-    O_PR: "false",
-    // Report by calendar period rather than MMWR week.
-    O_MMWR: "false",
-    // Multiple-cause and occurrence-geography selectors this app does not
-    // expose, but which WONDER expects to be present.
-    O_mcd: `${DB}.V13`,
-    O_death_location: `${DB}.V79`,
-  },
-  // Captured from a request verified against the live endpoint. Without the
-  // multiple-cause and occurrence-geography scaffolding it carries, D176
-  // answers HTTP 500.
+  grammar: "classic",
+  // Bridged race V8 stands where the newer files use single race V42.
+  ageAdjustVars: ["V10", "V17", "V1_S", "V8", "V7"],
+  extraParams: {},
   baseParams: baseParams as Record<string, string[]>,
-  // D176's own request template omits these; they are not sent.
+  // Absent from this grammar's template.
   supportsDisplayToggles: false,
   icdPresets: ICD_PRESETS,
 };

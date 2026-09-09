@@ -63,18 +63,19 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   // --- Options ---
   set("O_aar", wantsAgeAdjusted ? "aar_std" : "aar_none");
   set("O_aar_pop", "0000");
-  set("O_age", def.selectors.age);
-  set("O_dates", "YEAR");
+  if (def.selectors.age) set("O_age", def.selectors.age);
+  if (def.grammar === "expanded") set("O_dates", "YEAR");
   set("O_javascript", "on");
-  set("O_location", def.selectors.location);
-  set("O_oc-sect1-request", "close");
+  if (def.selectors.location) set("O_location", def.selectors.location);
+  if (def.grammar === "expanded") set("O_oc-sect1-request", "close");
   // Decimal places on returned rates. WONDER's own default is 1, which rounds
   // any rate below 0.05 to "0.0" — so every rare cause, and every
   // cause-specific rate in a partial period, arrives as a literal zero and
   // plots flat on the axis as though nothing happened. Three places keeps them.
   // Verified against the live API for both databases.
   set("O_precision", "3");
-  set("O_race", def.selectors.race);
+  // The classic grammar has no race selector; race is a plain value variable.
+  if (def.selectors.race) set("O_race", def.selectors.race);
   set("O_rate_per", String(spec.options.ratePer ?? 100000));
   set("O_show_totals", spec.options.showTotals === false ? "false" : "true");
   // Not every database accepts these; D176's own request template omits them.
@@ -84,15 +85,15 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   }
   set("O_timeout", "600");
   set("O_title", "");
-  set("O_ucd", def.selectors.ucd);
-  set("O_urban", def.selectors.urban);
+  if (def.selectors.ucd) set("O_ucd", def.selectors.ucd);
+  if (def.selectors.urban) set("O_urban", def.selectors.urban);
 
   // --- VM (age-adjust cross vars) ---
-  set(`VM_${db}.M6_${db}.V10`, "");
-  set(`VM_${db}.M6_${db}.V17`, "*All*");
-  set(`VM_${db}.M6_${db}.V1_S`, "*All*");
-  set(`VM_${db}.M6_${db}.V42`, "*All*");
-  set(`VM_${db}.M6_${db}.V7`, "*All*");
+  // Age-adjustment cross variables. The race one differs by database: single
+  // race V42 on the newer files, bridged race V8 on the classic one.
+  for (const v of def.ageAdjustVars) {
+    set(`VM_${db}.M6_${db}.${v}`, v === "V10" ? "" : "*All*");
+  }
 
   // --- Value-variable defaults ---
   for (const v of VALUE_VARS) set(`V_${db}.${v}`, "*All*");
@@ -142,15 +143,18 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
 
   // If month is used, allow month-level dates.
   if (groupBy.includes("month") || spec.filters.month?.length) {
-    set("O_dates", "MONTH");
+    // Only the expanded grammar has a date-resolution selector.
+    if (def.grammar === "expanded") set("O_dates", "MONTH");
   }
 
   // --- Control params ---
   set("action-Send", "Send");
-  set("dataset_code", db);
-  set("dataset_label", def.datasetLabel);
   set("stage", "request");
-  set("saved_id", "");
+  if (def.grammar === "expanded") {
+    set("dataset_code", db);
+    set("dataset_label", def.datasetLabel);
+    set("saved_id", "");
+  }
 
   // Whatever else this particular database demands, verbatim.
   for (const [name, value] of Object.entries(def.extraParams)) set(name, value);
