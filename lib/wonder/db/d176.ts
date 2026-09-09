@@ -254,4 +254,7 @@ export const D176: DatabaseDef = {
   // D176's own request template omits these; they are not sent.
   supportsDisplayToggles: false,
   icdPresets: ICD_PRESETS,
+  // Verified 2026-09-09: HTTP 200, title matches this database.
+  wonderPage: "https://wonder.cdc.gov/mcd-icd10-provisional.html",
+  citationFile: "provisional Multiple Cause of Death Files",
 };

@@ -68,4 +68,22 @@ export interface WonderResponse {
   error?: string;
   // echoes so the client knows how to render / chart
   spec: QuerySpec;
+  /**
+   * How the provisional counts have moved since this same query was last run.
+   * Present only when there is a prior observation AND something changed, so
+   * its absence means "nothing to report", not "not tracked".
+   */
+  revisions?: RevisionReport;
+}
+
+/** Mirrors lib/revisions.ts, kept here so the client needs no server import. */
+export interface RevisionReport {
+  previousObservedAt: string;
+  changes: {
+    period: string;
+    before: number;
+    after: number;
+    delta: number;
+    pct: number | null;
+  }[];
 }

@@ -43,6 +43,12 @@ export const D158: DatabaseDef = {
   extraParams: {},
   supportsDisplayToggles: true,
   icdPresets: d158.ICD_PRESETS,
+  // Verified 2026-09-09: returns HTTP 200 and its <title> is "Underlying Cause
+  // of Death, 2018-2024, Single Race Request". WONDER's API does not return a
+  // suggested citation — its web UI adds one to the results page — so
+  // lib/methods.ts reconstructs it from these two fields.
+  wonderPage: "https://wonder.cdc.gov/ucd-icd10-expanded.html",
+  citationFile: "Multiple Cause of Death Files, 2018-2024",
 };
 
 // Newest-first: the final file is the default, provisional adds recency,

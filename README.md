@@ -245,6 +245,67 @@ reads as a hang. `lib/wonder/composite.test.ts` drives the whole path against a
 stub fetcher, so year-slicing, the companion age query, the join and the notes
 are checked on every run without spending a CDC call.
 
+### Geography is not available, and cannot be
+
+CDC blocks it at the API, not at the query builder. A request grouping by
+`D158.V9` (States) returns HTTP 500 with:
+
+> Only national data are available for this dataset when using the WONDER web
+> service. Please check that your query does not group results by region,
+> division, state, county or urbanization, (B_1 through B_5), nor limit these
+> location variables to any specific values.
+
+Note that this covers **urbanization** as well as state and county, so the
+rural/urban classification is out too. The scaffolding for these variables is
+already in every request the app sends (`F_D158.V9=*All*`, `O_location`), and
+`V9`, `V10`, `V27`, `V11`, `V18` and `V19` are all present in
+`d158_variables.json` — none of that helps. Sub-national analysis needs a
+different data source, not a different query. Probed and confirmed 2026-09-09;
+don't spend an afternoon rediscovering it.
+
+### Provisional revisions
+
+`lib/revisions.ts` records the per-period death counts every time a provisional
+query goes out to CDC, and reports the difference when the same query runs
+again: *"Since Aug 12, 2026: 2025 revised up 412 deaths (+0.8%)."* Everyone is
+told provisional counts climb; almost nobody has a feel for the size of it, and
+this is that number rather than an adjective.
+
+It is one observation minus another — nothing is modelled. Two limits keep it
+honest:
+
+- **Only tables grouped purely by time.** Year × method has several rows per
+  period, and comparing across vintages then means either matching rows (which
+  breaks when a category appears or disappears) or summing them (which is wrong
+  when suppression differs between the two readings). Both are wrong in ways the
+  reader could not detect, so such tables are not tracked at all.
+- **Only provisional databases.** Final files do not move.
+
+A suppressed period is skipped rather than stored as zero — stored as zero it
+would appear to have been "revised up" by its whole count the moment suppression
+lifted. History lives in `logs/revisions.jsonl` (gitignored), appended only when
+something actually changed, and the report is deliberately **not** cached with
+the response: replaying it for twelve hours would make one revision look like
+several.
+
+### Methods and citation
+
+`lib/methods.ts` generates a methods paragraph and a citation from the spec that
+produced the table — same deterministic-text approach as `lib/insights.ts`, no
+model involved. It states the database and years, the selection, the
+standardisation, suppression and reliability rules, provisional status, and for
+a stitched series it reuses the stitch notes verbatim rather than describing the
+provenance a second time in prose (two descriptions of the same thing drift).
+Where a rate was computed here rather than published by CDC, it says so: letting
+a manuscript present one as CDC's is the single thing this must never do.
+
+WONDER's API returns no citation — its web interface adds one to the results
+page — so the citation is reconstructed from `wonderPage` and `citationFile` on
+each database (URLs verified 2026-09-09). It deliberately omits the "released in
+YYYY" clause the web citation carries: the API does not report a release year,
+and a guessed year in a bibliography is a wrong fact. The accession date carries
+the vintage instead.
+
 ### Not breaking the working dataset
 
 `lib/wonder/d158Snapshot.test.ts` pins the exact bytes D158 puts on the wire —

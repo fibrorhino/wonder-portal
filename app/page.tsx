@@ -7,6 +7,7 @@ import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
 import { shareUrl, specFromLocation, updateLocation } from "@/lib/shareLink";
 import { DEFAULT_DATABASE_ID, getDatabase } from "@/lib/wonder/db/registry";
+import { describeRevisions } from "@/lib/revisionsText";
 import DatasetPicker from "@/components/DatasetPicker";
 import Header from "@/components/Header";
 import { DataUseLink } from "@/components/DataUseNotice";
@@ -17,6 +18,7 @@ import ChartPanel from "@/components/ChartPanel";
 import StatsPanel from "@/components/StatsPanel";
 import InsightsPanel, { type Analysis } from "@/components/InsightsPanel";
 import ExampleQueries from "@/components/ExampleQueries";
+import MethodsPanel from "@/components/MethodsPanel";
 import RecentQueries from "@/components/RecentQueries";
 import ComparePanel from "@/components/ComparePanel";
 import { clearHistory, loadHistory, recordQuery, type HistoryEntry } from "@/lib/queryHistory";
@@ -431,6 +433,18 @@ export default function Home() {
                   </div>
                 )}
 
+                {/* How much the provisional counts moved since this same query
+                    last ran. Absent unless there is a prior observation and it
+                    differs, so it appears exactly when it has something to say. */}
+                {result?.revisions && (
+                  <div className="mb-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+                    {/* No lead-in label: the sentence already begins "Since
+                        <date>:", and prefixing it produced "Revised since you
+                        last ran this: Since Aug 12, 2026: ...". */}
+                    {describeRevisions(result.revisions)}
+                  </div>
+                )}
+
                 {canCompareYtd && (
                   <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
                     <p className="text-xs text-amber-900">
@@ -449,7 +463,13 @@ export default function Home() {
                   </div>
                 )}
 
-                {tab === "table" && <ResultsTable table={table} />}
+                {tab === "table" && (
+                  <div className="space-y-3">
+                    <ResultsTable table={table} />
+                    {/* Below the table: wanted when writing up, not while exploring. */}
+                    {result?.spec && <MethodsPanel spec={result.spec} table={table} />}
+                  </div>
+                )}
                 {tab === "chart" && (
                   <ChartPanel
                     key={`${chartKey}:${shapeKey}`}

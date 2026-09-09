@@ -256,4 +256,7 @@ export const D76: DatabaseDef = {
   // Absent from this grammar's template.
   supportsDisplayToggles: false,
   icdPresets: ICD_PRESETS,
+  // Verified 2026-09-09: HTTP 200, title matches this database.
+  wonderPage: "https://wonder.cdc.gov/ucd-icd10.html",
+  citationFile: "Multiple Cause of Death Files, 1999-2020",
 };

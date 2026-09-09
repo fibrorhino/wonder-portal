@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
 import { getDatabase, isKnownDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import { runComposite } from "@/lib/wonder/composite";
+import { observe } from "@/lib/revisions";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
 import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
 import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "@/lib/wonder/cdcErrors";
@@ -189,10 +190,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Record what the provisional counts look like now, and report what moved
+  // since this query last ran. Only reached on a cache MISS, which is what we
+  // want: a cached result is the same observation, not a new one.
+  const revisions = def.provisional ? await observe(spec, result.table) : null;
+
   const payload: WonderResponse = { ok: true, table: result.table, spec };
+  // Cached WITHOUT the revision report, and cached before it is attached:
+  // "Revised since you last ran this" describes something that happened on
+  // THIS fetch, and replaying it from cache for the next twelve hours would
+  // make one revision look like several. The cache holds this object by
+  // reference, so the report goes on a copy rather than on the cached one.
   cacheSet(key, payload);
+  const response: WonderResponse = revisions ? { ...payload, revisions } : payload;
   log(true, { cached: false });
-  return NextResponse.json(payload);
+  return NextResponse.json(response);
 }
 
 /**

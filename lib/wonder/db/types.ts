@@ -91,6 +91,17 @@ export interface DatabaseDef {
    * into one query per source.
    */
   composite?: { databaseId: string; from: number; to: number | null }[];
+  /**
+   * The WONDER landing page for this database, used in the accession line of a
+   * citation. Verified to return 200; a composite has none of its own and
+   * cites each source instead.
+   */
+  wonderPage?: string;
+  /**
+   * How NCHS names this file in a citation, e.g. "Multiple Cause of Death
+   * Files, 2018-2024". Differs from `label`, which names the WONDER database.
+   */
+  citationFile?: string;
 }
 
 export function variableByKey(db: DatabaseDef): Record<string, VariableDef> {
