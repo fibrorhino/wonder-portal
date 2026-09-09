@@ -10,6 +10,7 @@
 
 import type { QuerySpec } from "./types";
 import { ICD_PRESETS } from "./databases";
+import { getDatabase } from "./db/registry";
 
 export interface ExampleQuery {
   label: string;
@@ -96,3 +97,27 @@ export const EXAMPLE_QUERIES: ExampleQuery[] = [
     },
   },
 ];
+
+/**
+ * The examples that make sense for a given dataset.
+ *
+ * An example naming a variable the dataset does not have would produce a
+ * query WONDER rejects, so those are dropped rather than shown broken; the
+ * measures are narrowed to what the dataset publishes (no age-adjusted rate
+ * for provisional data).
+ */
+export function examplesFor(databaseId: string): ExampleQuery[] {
+  const db = getDatabase(databaseId);
+  const available = new Set(db.variables.map((v) => v.key));
+  return EXAMPLE_QUERIES.filter((e) => {
+    const used = [...e.spec.groupBy, ...Object.keys(e.spec.filters)];
+    return used.every((k) => available.has(k));
+  }).map((e) => ({
+    ...e,
+    spec: {
+      ...e.spec,
+      database: db.id,
+      measures: e.spec.measures.filter((m) => db.measures.includes(m)),
+    },
+  }));
+}

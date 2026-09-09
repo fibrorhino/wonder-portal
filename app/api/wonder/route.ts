@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import type { QuerySpec, WonderResponse } from "@/lib/wonder/types";
-import { DATABASE_ID, VARIABLE_BY_KEY } from "@/lib/wonder/databases";
+import { getDatabase, isKnownDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
 import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
 import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "@/lib/wonder/cdcErrors";
@@ -17,13 +17,22 @@ import {
 } from "@/lib/wonderHealth";
 import { logQuery } from "@/lib/queryLog";
 
-const WONDER_URL = `https://wonder.cdc.gov/controller/datarequest/${DATABASE_ID}`;
+// Each database is its own endpoint. This must follow the spec, not a
+// constant: a spec naming D176 sent to the D158 URL returns D158 data with no
+// error at all, which is the worst possible failure.
+const wonderUrl = (databaseId: string) =>
+  `https://wonder.cdc.gov/controller/datarequest/${databaseId}`;
 
 export const runtime = "nodejs";
 export const maxDuration = 60; // allow slow WONDER queries on Vercel
 
 function validate(spec: QuerySpec): string | null {
   if (!spec || typeof spec !== "object") return "Missing query spec.";
+  if (!isKnownDatabase(spec.database)) return `Unknown dataset: ${spec.database}`;
+  // Variables are per-database: D176 has no weekday, education or leading-cause
+  // variable, and validating against D158's registry would wave those through
+  // to a request WONDER then rejects.
+  const VARIABLE_BY_KEY = variableByKey(getDatabase(spec.database));
   if (!Array.isArray(spec.groupBy) || spec.groupBy.length === 0)
     return "Select at least one 'Group results by' variable.";
   if (spec.groupBy.length > 5) return "At most 5 group-by variables.";
@@ -31,6 +40,12 @@ function validate(spec: QuerySpec): string | null {
     const def = VARIABLE_BY_KEY[key];
     if (!def) return `Unknown variable: ${key}`;
     if (!def.canGroup) return `Cannot group by: ${def.label}`;
+  }
+  const dbDef = getDatabase(spec.database);
+  for (const m of spec.measures ?? []) {
+    if (!dbDef.measures.includes(m)) {
+      return `${dbDef.label} does not provide the ${m} measure.`;
+    }
   }
   const ageGroups = spec.groupBy.filter((k) => k.startsWith("age"));
   if (ageGroups.length > 1) return "Only one age grouping at a time.";
@@ -168,7 +183,7 @@ export async function POST(req: NextRequest) {
     // never helped, and claiming to be Chrome without a browser TLS
     // fingerprint is itself a bot-detection trigger.
     const doFetch = () =>
-      fetch(WONDER_URL, {
+      fetch(wonderUrl(getDatabase(spec.database).id), {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",

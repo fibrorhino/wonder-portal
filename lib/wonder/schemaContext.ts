@@ -2,12 +2,15 @@
 // its valid value codes, used to ground the natural-language interpreter so it
 // only ever emits keys/codes that actually exist (no hallucinated filters).
 
-import { CAUSE_PRESETS, VARIABLES } from "./databases";
+import { CAUSE_PRESETS } from "./databases";
+import { getDatabase } from "./db/registry";
 
-export function buildSchemaContext(): string {
+export function buildSchemaContext(databaseId?: string): string {
+  const db = getDatabase(databaseId);
   const lines: string[] = [];
+  lines.push(`Dataset: ${db.label}`);
   lines.push("Queryable variables (use these exact `key` values):");
-  for (const v of VARIABLES) {
+  for (const v of db.variables) {
     const flags = [v.canGroup ? "groupable" : null, v.canFilter ? "filterable" : null]
       .filter(Boolean)
       .join(", ");
@@ -32,7 +35,12 @@ export function buildSchemaContext(): string {
     "IMPORTANT constraint: only ONE cause-of-death framework may be used per query — " +
       "pick exactly one of: ucdCause (ICD-10 codes), injuryIntent/injuryMechanism, or leadingCauses. Never combine them.",
   );
-  lines.push("Measures available: deaths, population, crudeRate, ageAdjustedRate.");
-  lines.push("Years available: 2018 through 2024.");
+  lines.push(`Measures available: ${db.measures.join(", ")}.`);
+  lines.push(`Years available: ${db.years[0]} through ${db.years[db.years.length - 1]}.`);
+  if (db.provisional) {
+    lines.push(
+      "This dataset is PROVISIONAL: the most recent year is partial, and its counts are not comparable with a full year.",
+    );
+  }
   return lines.join("\n");
 }

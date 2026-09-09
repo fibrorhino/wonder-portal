@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import type { MeasureKey, QuerySpec } from "@/lib/wonder/types";
-import { DATABASE_ID, VARIABLE_BY_KEY } from "@/lib/wonder/databases";
+import { getDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import { buildSchemaContext } from "@/lib/wonder/schemaContext";
 import { logQuery } from "@/lib/queryLog";
 
@@ -77,11 +77,12 @@ function normalizeLlmOutput(raw: LlmRawOutput): LlmOutput {
   return { groupBy: raw.groupBy, measures: raw.measures, filters, chartType: raw.chartType, summary: raw.summary };
 }
 
-function buildPrompt(userText: string): string {
+function buildPrompt(userText: string, databaseId: string): string {
+  const db = getDatabase(databaseId);
   return `You translate a plain-English request about US mortality data into a structured query
-against the CDC WONDER "Underlying Cause of Death, 2018-2024, Single Race" database.
+against the CDC WONDER "${db.label}" database.
 
-${buildSchemaContext()}
+${buildSchemaContext(databaseId)}
 
 Rules:
 - groupBy: ordered list of variable keys to group results by (max 5). Put the most important grouping first (e.g. the thing being trended/compared).
@@ -104,7 +105,14 @@ function isMeasureKey(k: string): k is MeasureKey {
   return ["deaths", "population", "crudeRate", "ageAdjustedRate"].includes(k);
 }
 
-function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: string[] } | { error: string } {
+function validateAndBuildSpec(
+  out: LlmOutput,
+  databaseId: string,
+): { spec: QuerySpec; warnings: string[] } | { error: string } {
+  // Grounding and validation both follow the dataset the user is looking at:
+  // the provisional file has a different variable list and no age-adjusted rate.
+  const db = getDatabase(databaseId);
+  const VARIABLE_BY_KEY = variableByKey(db);
   const warnings: string[] = [];
 
   const groupBy = (out.groupBy ?? []).filter((k) => {
@@ -146,7 +154,9 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
   if (!measures.includes("population")) measures.splice(1, 0, "population");
   // Age-adjusted rate by default, matching the manual builder. It is dropped
   // downstream when the query groups by age, so asking for it is always safe.
-  if (!measures.includes("ageAdjustedRate")) measures.push("ageAdjustedRate");
+  if (!measures.includes("ageAdjustedRate") && db.measures.includes("ageAdjustedRate")) {
+    measures.push("ageAdjustedRate");
+  }
 
   const filters: Record<string, string[]> = {};
   for (const [key, codes] of Object.entries(out.filters ?? {})) {
@@ -199,7 +209,7 @@ function validateAndBuildSpec(out: LlmOutput): { spec: QuerySpec; warnings: stri
   }
 
   const spec: QuerySpec = {
-    database: DATABASE_ID,
+    database: db.id,
     groupBy,
     measures,
     filters,
@@ -220,9 +230,12 @@ export async function POST(req: NextRequest) {
   const key: string = maybeKey;
 
   let text: string;
+  let databaseId: string;
   try {
     const body = await req.json();
     text = String(body?.text ?? "").trim();
+    // The box translates against whichever dataset the user is looking at.
+    databaseId = getDatabase(body?.database).id;
   } catch {
     return NextResponse.json({ ok: false, error: "Invalid request body." }, { status: 400 });
   }
@@ -250,7 +263,7 @@ export async function POST(req: NextRequest) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: buildPrompt(text) }] }],
+          contents: [{ parts: [{ text: buildPrompt(text, databaseId) }] }],
           generationConfig: {
             responseMimeType: "application/json",
             responseSchema: RESPONSE_SCHEMA,
@@ -287,7 +300,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: `Could not reach Gemini: ${msg}` }, { status: 502 });
   }
 
-  const result = validateAndBuildSpec(llmOut);
+  const result = validateAndBuildSpec(llmOut, databaseId);
   if ("error" in result) {
     logQuery(req.headers, {
       kind: "nl",

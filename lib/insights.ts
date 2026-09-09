@@ -56,6 +56,7 @@ export function pointsFromFacts(f: FactSheet): string[] {
   if (f.rowCount === 0) return ["No records matched this query."];
 
   const points: string[] = [];
+  const caveatsProvisional: string[] = [];
   const per = f.ratePer;
 
   // ---- scale ----
@@ -134,8 +135,13 @@ export function pointsFromFacts(f: FactSheet): string[] {
     const tr = t.deathsTrend;
     if (tr && Number.isFinite(tr.totalChangePct)) {
       const dir = tr.totalChangePct >= 0 ? "rose" : "declined";
+      // The trend already excludes incomplete periods; say so, or a reader
+      // comparing the bullet with the table will think a year went missing.
+      const excluded = t.partialLabels.length
+        ? ` ${t.partialLabels.join(" and ")} ${t.partialLabels.length === 1 ? "is" : "are"} left out of this comparison, being incomplete.`
+        : "";
       points.push(
-        `Across the period, deaths ${dir} ${pct(Math.abs(tr.totalChangePct))}, from ${fmt(tr.first)} in ${tr.firstLabel} to ${fmt(tr.last)} in ${tr.lastLabel}.`,
+        `Across the period, deaths ${dir} ${pct(Math.abs(tr.totalChangePct))}, from ${fmt(tr.first)} in ${tr.firstLabel} to ${fmt(tr.last)} in ${tr.lastLabel}.${excluded}`,
       );
     }
     if (t.rateTrend && Number.isFinite(t.rateTrend.totalChangePct)) {
@@ -175,6 +181,16 @@ export function pointsFromFacts(f: FactSheet): string[] {
     );
   }
 
+  // ---- provisional-data caveat ----
+  if (f.provisional) {
+    const partial = f.time?.partialLabels ?? [];
+    caveatsProvisional.push(
+      partial.length
+        ? `These are provisional data. ${partial.join(" and ")} ${partial.length === 1 ? "covers" : "cover"} only part of the period, so ${partial.length === 1 ? "its" : "their"} counts are not comparable with a full period, and recent figures will be revised upward as death certificates are processed.`
+        : "These are provisional data: recent periods are still being processed and the counts will be revised upward.",
+    );
+  }
+
   // ---- caveats ----
   //
   // These are correctness notes, not nice-to-haves, so they are appended AFTER
@@ -193,5 +209,7 @@ export function pointsFromFacts(f: FactSheet): string[] {
     );
   }
 
-  return [...points.slice(0, 8), ...caveats];
+  // Provisional warnings lead the caveats: they change how every figure above
+  // should be read, so they must never be the thing a trim drops.
+  return [...points.slice(0, 8), ...caveatsProvisional, ...caveats];
 }

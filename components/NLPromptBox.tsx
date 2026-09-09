@@ -18,8 +18,11 @@ export interface NLResult {
 }
 
 export default function NLPromptBox({
+  databaseId,
   onResult,
 }: {
+  /** Translate against the dataset the user is currently looking at. */
+  databaseId: string;
   onResult: (result: NLResult) => void;
 }) {
   const [enabled, setEnabled] = useState(false);
@@ -42,7 +45,7 @@ export default function NLPromptBox({
       const res = await fetch("/api/nl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, database: databaseId }),
       });
       const parsed = await safeJson<{ ok: boolean; error?: string; spec: QuerySpec; chartType?: string; summary: string; warnings?: string[] }>(res);
       if (!parsed.ok) {

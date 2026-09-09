@@ -3,21 +3,25 @@
 // Starting points. Clicking one loads the spec into the builder and runs it, so
 // a first visit lands on real data instead of an empty form.
 
-import { EXAMPLE_QUERIES } from "@/lib/wonder/examples";
+import { examplesFor } from "@/lib/wonder/examples";
 import type { QuerySpec } from "@/lib/wonder/types";
 
 export default function ExampleQueries({
+  databaseId,
   onPick,
   disabled,
 }: {
+  databaseId: string;
   onPick: (spec: QuerySpec) => void;
   disabled?: boolean;
 }) {
+  const examples = examplesFor(databaseId);
+  if (examples.length === 0) return null;
   return (
     <div>
       <p className="mb-2 text-xs font-medium text-slate-500">Start from an example</p>
       <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-x-visible sm:pb-0">
-        {EXAMPLE_QUERIES.map((e) => (
+        {examples.map((e) => (
           <button
             key={e.label}
             type="button"

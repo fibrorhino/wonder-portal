@@ -6,7 +6,8 @@ import { talkingPoints } from "@/lib/insights";
 import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
 import { shareUrl, specFromLocation, updateLocation } from "@/lib/shareLink";
-import { DATABASE_LABEL } from "@/lib/wonder/databases";
+import { DEFAULT_DATABASE_ID, getDatabase } from "@/lib/wonder/db/registry";
+import DatasetPicker from "@/components/DatasetPicker";
 import Header from "@/components/Header";
 import { DataUseLink } from "@/components/DataUseNotice";
 import NLPromptBox, { type NLResult } from "@/components/NLPromptBox";
@@ -21,7 +22,7 @@ import ComparePanel from "@/components/ComparePanel";
 import { clearHistory, loadHistory, recordQuery, type HistoryEntry } from "@/lib/queryHistory";
 
 const INITIAL_SPEC: QuerySpec = {
-  database: "D158",
+  database: DEFAULT_DATABASE_ID,
   groupBy: ["year"],
   // Population is requested by default because it is the denominator the
   // insights engine needs to build correct marginal rates (lib/analysis/facts.ts);
@@ -118,6 +119,32 @@ export default function Home() {
     }
   };
 
+  /**
+   * Switch dataset. The query is rebuilt rather than carried over: the two
+   * datasets do not share a variable list, so a filter on weekday or education
+   * would silently become an invalid query, and a measures list containing
+   * age-adjusted rate is rejected by the provisional file. Grouping by year is
+   * the one thing both always support, so that is where the new spec starts.
+   */
+  const changeDataset = (id: string) => {
+    const db = getDatabase(id);
+    setSpec({
+      database: db.id,
+      groupBy: ["year"],
+      measures: INITIAL_SPEC.measures.filter((m) => db.measures.includes(m)),
+      filters: {},
+      options: { ...INITIAL_SPEC.options },
+    });
+    // Results, comparison and AI analysis all belong to the previous dataset.
+    setResult(null);
+    setError(null);
+    setPinned(null);
+    setAi(null);
+    setNlSummary(null);
+    setNlWarnings([]);
+    setTab("table");
+  };
+
   /** Load a spec into the builder and run it. */
   const applyAndRun = (next: QuerySpec, landOnTab: Tab = "table") => {
     setSpec(next);
@@ -206,19 +233,26 @@ export default function Home() {
   return (
     <div className="flex min-h-full flex-col bg-[#e7f0fa]">
       <Header />
-      <div className="border-b border-slate-100 bg-white">
-        <div className="mx-auto max-w-7xl px-4 py-1.5">
-          <p className="text-xs text-slate-400">{DATABASE_LABEL}</p>
-        </div>
-      </div>
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-5">
         <div className="mb-5">
-          <NLPromptBox onResult={handleNLResult} />
+          <DatasetPicker
+            databaseId={spec.database}
+            onChange={changeDataset}
+            disabled={loading}
+          />
+        </div>
+
+        <div className="mb-5">
+          <NLPromptBox databaseId={spec.database} onResult={handleNLResult} />
         </div>
 
         <div className="mb-5 space-y-4">
-          <ExampleQueries onPick={(next) => applyAndRun(next)} disabled={loading} />
+          <ExampleQueries
+            databaseId={spec.database}
+            onPick={(next) => applyAndRun(next)}
+            disabled={loading}
+          />
           <RecentQueries
             entries={history}
             onPick={(next) => applyAndRun(next)}
@@ -407,7 +441,8 @@ export default function Home() {
           <p>
             <span className="font-medium text-slate-600">Data source:</span>{" "}
             Centers for Disease Control and Prevention, National Center for
-            Health Statistics. {DATABASE_LABEL}, CDC WONDER online database.
+            Health Statistics. {getDatabase(spec.database).label}, CDC WONDER
+            online database.
             National data only (sub-national queries are unavailable via the
             API). Counts of 1–9 are suppressed and rates based on &lt;20 deaths
             are flagged unreliable, per CDC policy. Use of these data is subject
