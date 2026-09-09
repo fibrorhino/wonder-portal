@@ -260,6 +260,34 @@ Category labels therefore get an explicit `type: "category"` everywhere except
 scatter and bubble, which plot a genuine number on x, and horizontal bars, which
 swap the roles of the two axes.
 
+### Trend lines and joinpoint
+
+A **Trend line** control appears whenever the x axis is ordered (year, month,
+age). Both options fit on **ln(y)**, so the slope is an *annual percent change*
+rather than a constant number of deaths per year, which is how mortality trends
+are reported. Incomplete periods are excluded from the fit.
+
+- **Linear** — one slope across the whole span.
+- **Joinpoint** — a continuous piecewise-linear fit that finds where the trend
+  turned, choosing the number of bends by BIC so a straight series is not given
+  one it has not earned. Each segment reports its own APC, plus an overall AAPC.
+
+On US all-cause deaths 2018–2024 the difference is the point of the feature:
+
+| | fit |
+| --- | --- |
+| Linear | up 1.3%/yr, **r² = 0.13** |
+| Joinpoint | 2018–2021 up 7.5%/yr, then 2021–2024 down 4.5%/yr, **r² = 0.84** |
+
+It locates the 2021 peak unaided. **This is not the NCI Joinpoint Regression
+Program**: it selects the number of joinpoints by BIC rather than by that
+program's permutation test, and gives no confidence interval on the location of
+a turn. It describes where a trend bends; it is not a substitute for that
+software in a publication, and the UI says so next to the control.
+
+`lib/stats/joinpoint.ts` is unit-tested against series with a known APC and a
+known bend.
+
 ### Rate precision
 
 `O_precision` is sent as **3**, not WONDER's default of 1. At one decimal place

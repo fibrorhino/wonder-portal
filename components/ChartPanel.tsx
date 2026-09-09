@@ -20,6 +20,7 @@ import {
   numericEncode,
 } from "@/lib/tableUtils";
 import { computeRegression } from "@/lib/stats/regression";
+import { describeApc, fitTrend, type TrendPoint } from "@/lib/stats/joinpoint";
 import { exportPptx } from "@/lib/export/pptx";
 
 type ChartType =
@@ -100,6 +101,9 @@ export default function ChartPanel({
   const [yTitle, setYTitle] = useState("");
   const [palette, setPalette] = useState("Default");
   const [trendline, setTrendline] = useState(false);
+  // Trend fitting over a time axis. "joinpoint" lets the slope change where the
+  // data supports it; BIC decides whether it may.
+  const [trendMode, setTrendMode] = useState<"none" | "linear" | "joinpoint">("none");
   const [logY, setLogY] = useState(false);
   const [dataLabels, setDataLabels] = useState(false);
   const [smooth, setSmooth] = useState(false);
@@ -385,12 +389,103 @@ export default function ChartPanel({
           marker: { color, sizemode: "area", sizeref: (2 * globalMax) / 40 ** 2, size: s.y.map((v) => Math.max(v, 0)), opacity: 0.7 },
         });
       } else {
-        traces.push({ ...base, type: "scatter", mode: dataLabels ? "lines+markers+text" : "lines+markers", x: s.x, y: s.y });
+        const mode = dataLabels ? "lines+markers+text" : "lines+markers";
+        // The run into an incomplete period is drawn as its own faded, dotted
+        // trace. Fading only the final marker still left a full-strength line
+        // plunging towards it, which is the part that reads as a real fall.
+        const firstPartial = s.x.findIndex(
+          (xv) => typeof xv === "string" && isPartialPeriod(xv),
+        );
+        if (firstPartial > 0) {
+          const solid = { ...base, marker: { color, size: undefined } };
+          const cut = firstPartial;
+          traces.push({
+            ...solid,
+            type: "scatter",
+            mode,
+            legendgroup: name,
+            x: s.x.slice(0, cut),
+            y: s.y.slice(0, cut),
+            ...(dataLabels ? { text: s.y.slice(0, cut).map((v) => v.toLocaleString()) } : {}),
+          });
+          traces.push({
+            type: "scatter",
+            mode,
+            name,
+            legendgroup: name,
+            showlegend: false,
+            // Starts one point early so the segment joins the solid line.
+            x: s.x.slice(cut - 1),
+            y: s.y.slice(cut - 1),
+            line: { color, dash: "dot", width: 2.5 },
+            marker: { color },
+            opacity: 0.35,
+            hovertemplate: "%{x}<br>%{y:,} (incomplete)<extra></extra>",
+          });
+        } else {
+          traces.push({ ...base, type: "scatter", mode, x: s.x, y: s.y });
+        }
+      }
+    }
+
+    // ---- trend fitting over a time axis ----
+    //
+    // Fitted on ln(y), so the slope is an annual percent change rather than a
+    // constant number of deaths per year, which is how mortality trends are
+    // reported. Incomplete periods are excluded: a partial year would drag any
+    // fit towards a fall that has not happened.
+    const trendNotes: string[] = [];
+    if (trendMode !== "none" && !isPie && !NO_CARTESIAN.includes(chartType)) {
+      const xToLabel = new Map<number, string>();
+      for (const [, s2] of seriesEntries) {
+        for (const xv of s2.x) {
+          const label = String(xv);
+          const nx = typeof xv === "number" ? xv : numericEncode(xCol?.variableKey, label);
+          if (nx !== null) xToLabel.set(nx, label);
+        }
+      }
+      for (const [i, [name, s2]] of seriesEntries.entries()) {
+        const pts: TrendPoint[] = [];
+        s2.x.forEach((xv, j) => {
+          const label = String(xv);
+          if (isPartialPeriod(label)) return;
+          const nx = typeof xv === "number" ? xv : numericEncode(xCol?.variableKey, label);
+          if (nx !== null) pts.push({ x: nx, y: s2.y[j], label });
+        });
+        const fit = fitTrend(pts, trendMode === "joinpoint" ? 2 : 0);
+        if (!fit) continue;
+        const color = colors[i % colors.length];
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          name: `${name} trend`,
+          legendgroup: name,
+          showlegend: false,
+          x: fit.fitted.map((f) => xToLabel.get(f.x) ?? f.x),
+          y: fit.fitted.map((f) => f.y),
+          line: { color, dash: "dash", width: 1.8 },
+          hoverinfo: "skip",
+        });
+        if (seriesEntries.length <= 3) {
+          const parts = fit.segments.map(
+            (sg) => `${sg.startLabel}–${sg.endLabel} ${describeApc(sg.apc)}`,
+          );
+          const prefix = seriesEntries.length > 1 ? `${name}: ` : "";
+          const aapc =
+            fit.segments.length > 1 ? `; overall ${describeApc(fit.aapc)}` : "";
+          trendNotes.push(`${prefix}${parts.join(", then ")}${aapc} (r² = ${fit.r2.toFixed(2)})`);
+        }
+      }
+      if (trendNotes.length === 0 && seriesEntries.length > 3) {
+        trendNotes.push(
+          `Trend fitted for each of the ${seriesEntries.length} series; show fewer series to see the annual percent change.`,
+        );
       }
     }
 
     const annos: Record<string, unknown>[] = [];
     let note: string | null = null;
+    if (trendNotes.length) note = trendNotes.join(" · ");
     if (trendline && chartType === "scatter" && allPairs.length >= 2) {
       const reg = computeRegression(allPairs);
       if (reg) {
@@ -406,7 +501,7 @@ export default function ChartPanel({
 
     return { data: traces, annotations: annos, regressionNote: note, folded: foldedCount };
     // logY is deliberately absent: it only affects the axis type in `layout`.
-  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, dataLabels, smooth, sortDesc, xCol, yCol, effectiveTopN, additive]);
+  }, [rows, table.columns, chartType, isPie, horizontal, xIdx, seriesIdx, measureIdx, palette, trendline, trendMode, dataLabels, smooth, sortDesc, xCol, yCol, effectiveTopN, additive]);
 
   // A figure showing an "Other" slice is misleading in a report unless it says
   // what "Other" is, so the fold is recorded in the caption that travels with
@@ -428,6 +523,15 @@ export default function ChartPanel({
     if (!col || col.kind !== "dimension") return [] as string[];
     return [...new Set(rows.map((r) => cellLabel(r[xIdx])))].filter(isPartialPeriod);
   }, [rows, table.columns, xIdx]);
+
+  // A trend only means something along an ordered axis: years, months, ages.
+  // Offering it against race or mechanism would fit a slope to alphabetical
+  // order.
+  const xIsOrdered = useMemo(() => {
+    const key = xCol?.variableKey;
+    if (!key) return false;
+    return ["year", "month"].includes(key) || key.startsWith("age");
+  }, [xCol]);
 
   const legend = useMemo(() => {
     if (legendPos === "right") return { orientation: "v" as const, x: 1.02, y: 1, xanchor: "left" as const };
@@ -628,6 +732,39 @@ export default function ChartPanel({
               {additive
                 ? `${folded} smaller categories combined into “Other”.`
                 : `${folded} smaller categories hidden — ${yCol?.label ?? "this measure"} is a rate, and rates cannot be added together.`}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Trend fitting, only where the x axis is ordered. */}
+      {xIsOrdered && !isPie && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Field label="Trend line">
+            <select
+              value={trendMode}
+              onChange={(e) =>
+                setTrendMode(e.target.value as "none" | "linear" | "joinpoint")
+              }
+              className="ctrl"
+            >
+              <option value="none">None</option>
+              <option value="linear">Linear (annual % change)</option>
+              <option value="joinpoint">Joinpoint (finds where the trend turns)</option>
+            </select>
+          </Field>
+          {trendMode !== "none" && (
+            <p className="max-w-md text-xs text-slate-500">
+              Fitted on the log scale, so the slope is an{" "}
+              <strong>annual percent change</strong>. Incomplete periods are excluded.
+              {trendMode === "joinpoint" && (
+                <>
+                  {" "}
+                  A bend is only fitted where it earns its place (BIC). This is not the
+                  NCI Joinpoint program — no permutation test, no confidence intervals
+                  on the turn — so treat it as a description, not a published result.
+                </>
+              )}
             </p>
           )}
         </div>
