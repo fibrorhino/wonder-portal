@@ -3,7 +3,12 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "./cdcErrors";
+import {
+  cdcBusyMessage,
+  cdcHttpErrorMessage,
+  cdcNetworkErrorMessage,
+  isQueryRejection,
+} from "./cdcErrors";
 
 const blamesCdc = (m: string) => /CDC/.test(m);
 const saysNotUs = (m: string) => /not a problem with this site|not with this site/i.test(m);
@@ -65,4 +70,40 @@ test("a non-Error rejection does not produce garbage", () => {
   const m = cdcNetworkErrorMessage("something odd");
   assert.ok(blamesCdc(m), m);
   assert.ok(!/undefined|\[object/.test(m), m);
+});
+
+// CDC refuses a query it will not run with HTTP 500 and a sentence saying why.
+// Both strings below are CDC's own, captured from the live API.
+const RACE_REFUSAL =
+  "Age Adjusted Rates are not available when values are selected for Single Race 15 or " +
+  "Single/Multi Race 31 in section 3, or if these variables appear in Group Results By list " +
+  "in section 1.  Uncheck the Age Adjusted Rates checkbox.";
+
+test("a 500 that explains itself is shown as a refusal, not as an outage", () => {
+  const m = cdcHttpErrorMessage(500, RACE_REFUSAL);
+  assert.ok(m.includes("Age Adjusted Rates are not available"), m);
+  // "Temporarily unavailable, try again in a minute" was what this produced,
+  // for a query that fails identically every time it is run.
+  assert.ok(!/temporarily unavailable/i.test(m), m);
+  assert.ok(!/try again/i.test(m), m);
+  assert.ok(!m.endsWith(".."), "no doubled full stop");
+});
+
+test("a refusal is not an outage; a block or a silent 500 is", () => {
+  assert.equal(isQueryRejection(500, RACE_REFUSAL), true);
+  assert.equal(isQueryRejection(400, "Invalid ICD-10 code: ZZZ"), true);
+  // Nothing to go on: treat as CDC being unwell.
+  assert.equal(isQueryRejection(500, null), false);
+  assert.equal(isQueryRejection(502, "   "), false);
+  // The edge turning this server away is never about the query, whatever the
+  // body says.
+  assert.equal(isQueryRejection(403, "Forbidden"), false);
+  assert.equal(isQueryRejection(429, "Too many requests"), false);
+});
+
+test("a full queue is explained as a wait, without blaming CDC's servers", () => {
+  const m = cdcBusyMessage();
+  assert.ok(/15 seconds/.test(m), m);
+  assert.ok(suggestsRetry(m) || /run it again/i.test(m), m);
+  assert.ok(!/unavailable/i.test(m), m);
 });

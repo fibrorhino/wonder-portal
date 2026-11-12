@@ -10,11 +10,13 @@ import type { MeasureKey, QuerySpec } from "@/lib/wonder/types";
 import { getDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import { buildSchemaContext } from "@/lib/wonder/schemaContext";
 import { logQuery } from "@/lib/queryLog";
+import { callGemini, geminiModelChain, geminiText } from "@/lib/geminiCall";
+import { quotaMessage } from "@/lib/geminiQuota";
 
 export const runtime = "nodejs";
 
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+// Which models, in what order, and what happens when one fails: lib/geminiCall.ts.
+const GEMINI_MODELS = geminiModelChain(process.env.GEMINI_MODEL);
 const MAX_PROMPT_CHARS = 2000;
 
 function apiKey(): string | null {
@@ -67,14 +69,25 @@ interface LlmOutput {
   summary: string;
 }
 
+// The schema asks for these shapes, but a model's output is still only text
+// that usually parses: anything that is not a list of strings is treated as
+// absent rather than trusted.
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
 function normalizeLlmOutput(raw: LlmRawOutput): LlmOutput {
   const filters: Record<string, string[]> = {};
-  for (const f of raw.filters ?? []) {
-    if (f?.key && Array.isArray(f.values) && f.values.length > 0) {
-      filters[f.key] = f.values;
-    }
+  for (const f of Array.isArray(raw.filters) ? raw.filters : []) {
+    const values = strings(f?.values);
+    if (typeof f?.key === "string" && f.key && values.length > 0) filters[f.key] = values;
   }
-  return { groupBy: raw.groupBy, measures: raw.measures, filters, chartType: raw.chartType, summary: raw.summary };
+  return {
+    groupBy: strings(raw.groupBy),
+    measures: strings(raw.measures),
+    filters,
+    chartType: typeof raw.chartType === "string" ? raw.chartType : undefined,
+    summary: typeof raw.summary === "string" ? raw.summary : "",
+  };
 }
 
 function buildPrompt(userText: string, databaseId: string): string {
@@ -173,8 +186,19 @@ function validateAndBuildSpec(
         warnings.push(`Some values for "${def.label}" weren't recognized and were dropped.`);
       }
       if (kept.length > 0) filters[key] = kept;
+    } else if (key === "year") {
+      // Years are open-ended to WONDER but not to this dataset. Asked about
+      // "the last ten years" against the 2018-2024 file, the model fills in
+      // 2015-2017 as well, and CDC refuses the whole query over them.
+      const kept = codes.filter((c) => db.years.includes(c));
+      if (kept.length !== codes.length) {
+        warnings.push(
+          `${db.shortLabel} covers ${db.years[0]}–${db.years[db.years.length - 1]}; years outside that were dropped.`,
+        );
+      }
+      if (kept.length > 0) filters[key] = kept;
     } else {
-      // finder (e.g. year, ucdCause): pass through as-is (free-text codes)
+      // Other finders (ICD codes): free-text, passed through as given.
       filters[key] = codes;
     }
   }
@@ -252,52 +276,66 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Gemini's free tier occasionally returns transient 503 ("high demand"); a
-  // couple of short retries smooth this over for the user rather than failing
-  // the whole request on a blip.
-  async function callGemini(): Promise<Response> {
-    let lastRes: Response | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
-      const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(key)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: buildPrompt(text, databaseId) }] }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: RESPONSE_SCHEMA,
-            temperature: 0.1,
-          },
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (res.ok || res.status !== 503) return res;
-      lastRes = res;
+  const fail = (status: number, error: string, detail?: string) => {
+    logQuery(req.headers, {
+      kind: "nl",
+      ok: false,
+      ms: Date.now() - startedAt,
+      text,
+      error,
+      detail,
+    });
+    return NextResponse.json({ ok: false, error }, { status });
+  };
+
+  const call = await callGemini({
+    key,
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: buildPrompt(text, databaseId) }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0.1,
+      },
+    }),
+    models: GEMINI_MODELS,
+    timeoutMs: 30_000,
+    tag: "nl",
+  });
+  if (!call.ok) {
+    // What Google said goes to the log. The visitor gets what to do about it:
+    // these used to be shown the first 300 characters of the JSON error body.
+    const detail = `HTTP ${call.status ?? "none"} from ${call.model}: ${call.detail.slice(0, 300)}`;
+    if (call.status === 429) return fail(429, quotaMessage(call.quota, "ask"), detail);
+    if (call.status === 503) {
+      return fail(
+        503,
+        "The AI service is temporarily overloaded. Try again in a moment, or use the query builder below.",
+        detail,
+      );
     }
-    return lastRes!;
+    return fail(
+      502,
+      call.status === null
+        ? "Could not reach the AI service. Try again in a moment, or use the query builder below."
+        : `The plain-English box is unavailable right now (the AI service returned ${call.status}). The query builder below does not need it.`,
+      detail,
+    );
   }
 
   let llmOut: LlmOutput;
   try {
-    const res = await callGemini();
-    if (!res.ok) {
-      const errText = await res.text();
-      const busy = res.status === 503 ? " Gemini is temporarily overloaded — please try again in a moment." : "";
-      return NextResponse.json(
-        { ok: false, error: `Gemini API error (HTTP ${res.status}): ${errText.slice(0, 300)}${busy}` },
-        { status: 502 },
-      );
-    }
-    const data = await res.json();
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) {
-      return NextResponse.json({ ok: false, error: "Gemini returned no usable response. Try rephrasing." }, { status: 502 });
-    }
-    llmOut = normalizeLlmOutput(JSON.parse(raw));
+    const raw = geminiText(call.data);
+    if (!raw) return fail(502, "The AI returned no usable response. Try rephrasing.", "empty response");
+    const parsed = JSON.parse(raw) as LlmRawOutput | null;
+    if (!parsed || typeof parsed !== "object") throw new Error("not an object");
+    llmOut = normalizeLlmOutput(parsed);
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: `Could not reach Gemini: ${msg}` }, { status: 502 });
+    return fail(
+      502,
+      "The AI returned a response that could not be read. Try rephrasing.",
+      `unparseable: ${e instanceof Error ? e.message : String(e)}`,
+    );
   }
 
   const result = validateAndBuildSpec(llmOut, databaseId);

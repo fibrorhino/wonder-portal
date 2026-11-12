@@ -36,6 +36,16 @@ export interface VariableDef {
   control?: { param: string; value: string };
   group: string; // UI grouping heading
   note?: string;
+  /**
+   * CDC publishes no age-adjusted rate when this variable is grouped by OR
+   * filtered on. Asking for one anyway is refused outright (HTTP 500, "Age
+   * Adjusted Rates are not available when values are selected for Single Race
+   * 15 or Single/Multi Race 31..."), so the builder leaves the measure out.
+   * In practice these queries come back with deaths and nothing else (no
+   * population or crude rate either), which the parser reads from the
+   * response rather than assuming. Verified against the live API 2026-11-11.
+   */
+  noAgeAdjusted?: boolean;
   // values populated from metadata (empty for finder vars whose codes are open-ended)
   values: VariableValue[];
 }
@@ -161,7 +171,9 @@ export const VARIABLES: VariableDef[] = [
     canGroup: true,
     canFilter: true,
     control: { param: "O_race", value: "D158.V43" },
+    noAgeAdjusted: true,
     group: "Demographics",
+    note: "Death counts only: CDC returns no population or rates at this level of detail.",
     values: valuesFor("D158.V43"),
   },
   {
@@ -173,8 +185,9 @@ export const VARIABLES: VariableDef[] = [
     canGroup: true,
     canFilter: true,
     control: { param: "O_race", value: "D158.V44" },
+    noAgeAdjusted: true,
     group: "Demographics",
-    note: "Most detailed race categorization.",
+    note: "Most detailed race categorization. Death counts only: CDC returns no population or rates at this level of detail.",
     values: valuesFor("D158.V44"),
   },
   {

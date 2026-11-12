@@ -8,7 +8,7 @@
 import { useMemo, useRef, useState } from "react";
 import Plot, { type PlotHandle } from "./Plot";
 import type { MeasureKey, QuerySpec, ResultTable } from "@/lib/wonder/types";
-import { figureCaption } from "@/lib/describeSpec";
+import { computedRateNote, figureCaption } from "@/lib/describeSpec";
 import { isPartialPeriod } from "@/lib/analysis/facts";
 import { axisTypes } from "@/lib/chartAxes";
 import {
@@ -549,12 +549,21 @@ export default function ChartPanel({
   // what "Other" is, so the fold is recorded in the caption that travels with
   // the exported PNG and slide — not just in the on-screen note.
   const drawnCaptionLines = useMemo(() => {
-    if (folded <= 0) return captionLines;
-    const note = additive
-      ? `Showing the largest ${effectiveTopN ?? 0}; the remaining ${folded} categories are combined as “Other”.`
-      : `Showing the largest ${effectiveTopN ?? 0}; ${folded} smaller categories are not shown (rates cannot be pooled).`;
-    return [...captionLines, note];
-  }, [captionLines, folded, additive, effectiveTopN]);
+    const lines = [...captionLines];
+    // A figure of the age-adjusted rate on the combined series plots rates
+    // this site computed next to rates CDC published. The exported image has
+    // to say which is which, exactly as the table does.
+    const computed = yCol?.measureKey === "ageAdjustedRate" ? computedRateNote(table) : null;
+    if (computed) lines.push(computed);
+    if (folded > 0) {
+      lines.push(
+        additive
+          ? `Showing the largest ${effectiveTopN ?? 0}; the remaining ${folded} categories are combined as “Other”.`
+          : `Showing the largest ${effectiveTopN ?? 0}; ${folded} smaller categories are not shown (rates cannot be pooled).`,
+      );
+    }
+    return lines;
+  }, [captionLines, folded, additive, effectiveTopN, yCol?.measureKey, table]);
 
   // X categories WONDER marked as incomplete. A partial period plotted like any
   // other reads as a collapse, so it is called out on the figure itself — the

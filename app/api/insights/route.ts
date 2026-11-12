@@ -20,35 +20,13 @@ import { buildFactSheet, keyFigures, renderFactSheet } from "@/lib/analysis/fact
 import { buildAllowSet, verifyStatements } from "@/lib/analysis/verify";
 import { pointsFromFacts } from "@/lib/insights";
 import { createCache } from "@/lib/cache";
-import {
-  describeQuota,
-  parseQuotaFailure,
-  quotaMessage,
-  type QuotaFailure,
-} from "@/lib/geminiQuota";
+import { quotaMessage } from "@/lib/geminiQuota";
+import { callGemini, geminiModelChain, geminiText } from "@/lib/geminiCall";
 
 export const runtime = "nodejs";
 
-// Models in preference order. Google retires model ids without warning (this
-// route was pinned to gemini-2.5-flash until it stopped serving new callers
-// with a 404), so a retirement now falls through to the next id instead of
-// taking the feature down. Pinned ids rather than a floating alias, so the
-// behaviour only changes when this list does.
-//
-// Flash-Lite leads: this site is public and runs on the free tier, and the
-// model is not doing the arithmetic — every figure is supplied by the fact
-// sheet and checked afterwards — so the cheaper model with the higher quota is
-// the right default. GEMINI_MODEL overrides it without a code change.
-const DEFAULT_MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-2.5-flash-lite",
-  "gemini-3.6-flash",
-];
-const GEMINI_MODELS = process.env.GEMINI_MODEL
-  ? [process.env.GEMINI_MODEL, ...DEFAULT_MODELS.filter((m) => m !== process.env.GEMINI_MODEL)]
-  : DEFAULT_MODELS;
-const modelUrl = (model: string) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+// Which models, in what order, and what happens when one fails: lib/geminiCall.ts.
+const GEMINI_MODELS = geminiModelChain(process.env.GEMINI_MODEL);
 
 const RESPONSE_SCHEMA = {
   type: "object",
@@ -179,73 +157,46 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    let res: Response | null = null;
-    let model = GEMINI_MODELS[0];
-    // A failing response's body can only be read once, so it is captured here
-    // and reused below rather than re-read.
-    let detail: string | null = null;
-    let quota: QuotaFailure | null = null;
-    outer: for (const candidate of GEMINI_MODELS) {
-      model = candidate;
-      // Gemini's free tier returns 503 under load; a short backoff clears it.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
-        res = await fetch(`${modelUrl(candidate)}?key=${encodeURIComponent(key)}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal: AbortSignal.timeout(45_000),
-        });
-        if (res.ok) break outer;
-        detail = await res.text();
-        // 404 means this model id is gone — move on rather than retrying it.
-        if (res.status === 404) break;
-        if (res.status === 429) {
-          quota = parseQuotaFailure(detail);
-          // Google no longer publishes the free-tier numbers, so this line is
-          // the only record of which limit was hit and what its value is.
-          console.warn(
-            `[insights] 429 from ${candidate}: ${quota ? describeQuota(quota) : detail.slice(0, 200)}`,
-          );
-          // Free-tier limits are scoped per model, so the next id in the list
-          // has its own allowance and is worth trying — which is the entire
-          // point of having a fallback chain. Only a project-wide quota (or a
-          // body that did not say) makes trying another one pointless.
-          if (quota?.perModelOnly) break;
-          break outer;
-        }
-        if (res.status !== 503) break outer;
-      }
-    }
-    if (!res || !res.ok) {
-      detail = detail ?? (res ? await res.text() : "no response");
+    const call = await callGemini({
+      key,
+      body,
+      models: GEMINI_MODELS,
+      timeoutMs: 45_000,
+      tag: "insights",
+    });
+    if (!call.ok) {
       // A raw API error blob tells the reader nothing they can act on, and the
       // two cases that actually happen have different answers: wait a moment,
       // or wait until tomorrow.
-      if (res?.status === 429) {
+      if (call.status === 429) {
         // The free tier enforces both a per-minute and a per-day limit and
         // returns 429 for either. The body usually says which, and often for
         // how long; where it does not, the message says so rather than
         // guessing.
-        return NextResponse.json({ ok: false, error: quotaMessage(quota) }, { status: 429 });
+        return NextResponse.json({ ok: false, error: quotaMessage(call.quota) }, { status: 429 });
       }
-      if (res?.status === 503) {
+      if (call.status === 503) {
         return NextResponse.json(
           { ok: false, error: "The AI service is temporarily overloaded. Try again in a moment." },
           { status: 503 },
         );
       }
+      // The body is in the server log (lib/geminiCall.ts). It names the
+      // project and the model and is no use to a visitor.
       return NextResponse.json(
         {
           ok: false,
-          error: `AI analysis failed (HTTP ${res?.status ?? "?"}): ${detail.slice(0, 200)}`,
+          error:
+            call.status === null
+              ? "Could not reach the AI service. Try again in a moment."
+              : `AI analysis is unavailable right now (the AI service returned ${call.status}). The talking points below are computed directly from the data and do not need it.`,
         },
         { status: 502 },
       );
     }
 
-    const data = await res.json();
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const model = call.model;
+    const raw = geminiText(call.data);
     if (!raw) {
       return NextResponse.json(
         { ok: false, error: "Gemini returned no usable response." },
@@ -311,7 +262,13 @@ export async function POST(req: NextRequest) {
     analysisCache.set(cacheKey, result);
     return NextResponse.json({ ok: true, ...result, cached: false });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return NextResponse.json({ ok: false, error: `Could not reach Gemini: ${msg}` }, { status: 502 });
+    // Network failures are handled inside callGemini, so what lands here is a
+    // response that would not parse: the model returned something other than
+    // the JSON it was asked for.
+    console.warn("[insights] unusable response:", e instanceof Error ? e.message : e);
+    return NextResponse.json(
+      { ok: false, error: "The AI returned a response that could not be read. Try again." },
+      { status: 502 },
+    );
   }
 }

@@ -50,6 +50,22 @@ const rateText = (c: CategoryFact, per: number) =>
   c.rate === null ? "" : ` (${fmt(c.rate, 1)} per ${fmt(per)})`;
 
 /** Talking points computed straight from the table. */
+/**
+ * Periods named in a sentence.
+ *
+ * WONDER labels an incomplete period "2026 (provisional and partial)", which
+ * belongs on an axis and is unreadable in prose, and the sentences that use
+ * this already say the periods are incomplete. Grouped by month, the current
+ * year contributes nine or ten such labels at once, and joining them with
+ * "and" produced a single bullet several lines long that was nothing but a
+ * list. Three or more are given as a span instead.
+ */
+function periodList(labels: string[], capitalise = false): string {
+  const bare = labels.map((l) => l.replace(/\s*\(.*\)\s*$/, ""));
+  if (bare.length <= 2) return bare.join(" and ");
+  return `${capitalise ? "The" : "the"} ${bare.length} periods from ${bare[0]} to ${bare[bare.length - 1]}`;
+}
+
 export function talkingPoints(table: ResultTable, spec?: QuerySpec): string[] {
   return pointsFromFacts(buildFactSheet(table, spec));
 }
@@ -151,7 +167,7 @@ export function pointsFromFacts(f: FactSheet): string[] {
       // The trend already excludes incomplete periods; say so, or a reader
       // comparing the bullet with the table will think a year went missing.
       const excluded = t.partialLabels.length
-        ? ` ${t.partialLabels.join(" and ")} ${t.partialLabels.length === 1 ? "is" : "are"} left out of this comparison, being incomplete.`
+        ? ` ${periodList(t.partialLabels, true)} ${t.partialLabels.length === 1 ? "is" : "are"} left out of this comparison, being incomplete.`
         : "";
       points.push(
         `Across the period, deaths ${dir} ${pct(Math.abs(tr.totalChangePct))}, from ${fmt(tr.first)} in ${tr.firstLabel} to ${fmt(tr.last)} in ${tr.lastLabel}.${excluded}`,
@@ -220,7 +236,7 @@ export function pointsFromFacts(f: FactSheet): string[] {
     const partial = f.time?.partialLabels ?? [];
     caveatsProvisional.push(
       partial.length
-        ? `These are provisional data. ${partial.join(" and ")} ${partial.length === 1 ? "covers" : "cover"} only part of the period, so ${partial.length === 1 ? "its" : "their"} counts are not comparable with a full period, and recent figures will be revised upward as death certificates are processed.`
+        ? `These are provisional data. ${periodList(partial, true)} ${partial.length === 1 ? "covers" : "cover"} only part of the period, so ${partial.length === 1 ? "its" : "their"} counts are not comparable with a full period, and recent figures will be revised upward as death certificates are processed.`
         : "These are provisional data: recent periods are still being processed and the counts will be revised upward.",
     );
   }

@@ -29,7 +29,18 @@ export function cdcHttpErrorMessage(status: number, detail: string | null): stri
     );
   }
 
-  // 429 is an explicit rate limit; 5xx is CDC being unwell. Same advice.
+  // CDC refuses a query it will not run with a 500 AND an explanation. Asking
+  // for state-level data is the standing example ("Only national data are
+  // available for this dataset when using the WONDER web service"). Telling the
+  // visitor CDC is "temporarily unavailable, try again in a minute" sent them
+  // round in circles: the same query fails the same way every time, and the
+  // one sentence that says why was being thrown away.
+  if (isQueryRejection(status, detail)) {
+    return `CDC WONDER could not run this query: ${withFullStop(detail!)}`;
+  }
+
+  // 429 is an explicit rate limit; a 5xx with nothing to say for itself is CDC
+  // being unwell. Same advice.
   if (status === 429 || status >= 500) {
     return (
       `CDC WONDER is temporarily unavailable (their server returned ${status}). ` +
@@ -41,8 +52,35 @@ export function cdcHttpErrorMessage(status: number, detail: string | null): stri
   // Anything else usually means CDC understood the request and objected to it,
   // so surface their explanation — that one IS about the query.
   return detail
-    ? `CDC WONDER could not run this query: ${detail}.`
+    ? `CDC WONDER could not run this query: ${withFullStop(detail)}`
     : `CDC WONDER could not run this query (their server returned ${status}). Please try again shortly.`;
+}
+
+/** CDC's messages sometimes end in a full stop and sometimes do not. */
+function withFullStop(text: string): string {
+  const t = text.trim();
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/**
+ * True when CDC answered with an error status but told us what was wrong with
+ * the query. That is CDC working as intended and refusing a request, not CDC
+ * being down, so it must not count against the health check either.
+ *
+ * 403 and 429 are excluded whatever they carry: those come from CDC's edge and
+ * are about this server's traffic, never about the query.
+ */
+export function isQueryRejection(status: number, detail: string | null): boolean {
+  if (status === 403 || status === 429) return false;
+  return status >= 400 && Boolean(detail && detail.trim());
+}
+
+/** Message for a request this site declined to queue: too many already waiting. */
+export function cdcBusyMessage(): string {
+  return (
+    "Several queries are already waiting. CDC allows one request every 15 seconds, " +
+    "so this one could not be started in time. Please run it again in about a minute."
+  );
 }
 
 /** Message for a request that never got a usable response at all. */

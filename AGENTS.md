@@ -26,7 +26,7 @@ anything in `lib/wonder/` or `lib/analysis/`.
 
 | | |
 |---|---|
-| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~175 tests, <1s. Run after **any** change under `lib/`. |
+| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~230 tests, <1s. Run after **any** change under `lib/`. |
 | `npx tsc --noEmit` | Typecheck the app. |
 | `npx eslint app components lib` | Lint. |
 | `NEXT_DIST_DIR=.next-validate npx next build` | **Compile check that does not touch the live build.** Use this to verify; delete `.next-validate` after. |
@@ -96,6 +96,36 @@ Adding a fifth dataset is a session of probing, not an afternoon.
   2026-09-09. State data exists on `data.cdc.gov` (Socrata) as a **separate
   source** — scoped, not built.
 - **The API returns no citation.** `lib/methods.ts` reconstructs it.
+- **Node's default User-Agent is refused.** `fetch` sends `User-Agent: node`,
+  and CDC's edge answers that string with 403. Measured 2026-11-11 from one
+  cloud address, same request, seconds apart: curl 200; curl with
+  `User-Agent: node` 403; Node `fetch` default 403; Node `fetch` with a named
+  product token 200. `lib/wonder/userAgent.ts` sets one (`WONDER_USER_AGENT`
+  overrides it). **Not tested:** this request shape from Vercel or Azure. The
+  cloud deployments that were blocked sent a copied Chrome User-Agent plus
+  `origin`/`referer` (see the `CDCwonder` repo): a third shape, also refused.
+  So the hosting conclusion rests on two failing shapes and has not been tried
+  with the one that passes. Do not move hosting on the strength of this without
+  testing from the target host, and do not go back to imitating a browser.
+- **A 500 with a `<message>` is CDC refusing the query, not CDC being down.**
+  It used to be shown as "temporarily unavailable, try again in a minute" and
+  counted against `/api/health`. `isQueryRejection()` in `lib/wonder/cdcErrors.ts`
+  tells the two apart. The message may or may not be wrapped in CDATA.
+- **Age-adjusted rates are refused (500) in four cases**, all handled by
+  `ageAdjustedBlocker()` in `lib/wonder/buildRequest.ts`, which the builder, the
+  parser, the composite and the UI all consult: grouped by age; filtered on
+  five-year or single-year ages; filtered to a single ten-year age group;
+  grouped or filtered by the 15- or 31-group race classification. The last one
+  comes back with deaths only, with no population or crude rate either.
+- **The response says what it contains.** `<measure-selections-all>` lists the
+  measure columns actually returned, and the parser reads it rather than
+  assuming the request was honoured. `<caveat>` appears in two places: about
+  forty *definitions* under `<dataset>` (each with a `<rule>`), and the handful
+  that apply under `<response><caveats>`. Only the second is shown.
+- **A year CDC has not loaded yet is refused** ("Invalid 'Year/Month' codes were
+  found: '2027'"). The provisional file lags the calendar every January, and the
+  composite names its years explicitly, so `lib/wonder/composite.ts` drops the
+  refused years and asks once more.
 
 ### The composite (`COMBINED`)
 
@@ -126,10 +156,11 @@ table → buildFactSheet()   exact figures, computed here, no model
 **The model never supplies a statistic.** If you change `lib/analysis/facts.ts`,
 you change what the model is allowed to say. Keep it that way.
 
-Gemini model IDs get retired without notice, so `app/api/insights/route.ts`
-holds a fallback chain (`gemini-3.5-flash-lite` → `gemini-2.5-flash-lite` →
-`gemini-3.6-flash`). Free-tier limits are per-model, so a 429 falls through to
-the next id when the quota body says the violated quota is `PerModel`.
+Gemini model IDs get retired without notice, so `lib/geminiCall.ts` holds a
+fallback chain (`gemini-3.5-flash-lite` → `gemini-2.5-flash-lite` →
+`gemini-3.6-flash`) used by **both** `/api/insights` and `/api/nl`. Free-tier
+limits are per-model, so a 429 falls through to the next id when the quota body
+says the violated quota is `PerModel`.
 `lib/geminiQuota.ts` parses that body — Google no longer publishes the numbers,
 so the 429 log line is the only authoritative record of which limit was hit.
 
@@ -157,6 +188,17 @@ so the 429 log line is the only authoritative record of which limit was hit.
 - **`describeFilters()` returns a sentence** ("All deaths, all years (no filters
   applied)"), not `""`, when nothing is filtered. Use `filterChips().length`.
 - **`<dialog>` inside `<p>`** breaks hydration; portal it to `document.body`.
+- **CDATA must come off before tags are stripped.** `<![CDATA[` starts with
+  `<`, so `/<[^>]+>/` eats everything up to the first `>`, which is the whole text when
+  there is no markup inside. This silently emptied CDC's caveats and any error
+  message CDC wrapped in CDATA.
+- **Hand-built fixtures hide format bugs.** The caveat bug passed every test
+  because the fixture had one tidy `<caveat>`. `lib/wonder/fixtures/` now holds
+  real responses, trimmed but not edited. Do not tidy them.
+- **A long request is not a failed one.** The tunnel drops the visitor at 100 s;
+  the server carries on, finishes, and caches. Do not add a timeout shorter
+  than CDC's worst case (76 s measured for the provisional file by single year
+  of age). That turns "slow, then cached" into "fails every time".
 - **Windows shell heredocs mangle backslashes** — `\b` becomes 0x08, `\n` a real
   newline, and a NUL byte once landed in a source file this way. Use the file
   editing tools for anything containing regexes or escapes, not shell heredocs.
@@ -185,12 +227,17 @@ The user runs the restart. Two WinSW services, both working from `C:\dev\wonderw
 - **`WonderTunnel`** — `cloudflared` with `tools/config.yml`, tunnel `wonder-portal`.
 
 Health: `https://mortality.nestadt.org/api/health` (CDC status, call counts,
-uptime). Logs in `logs/`: `queries.jsonl` (usage, real IPs via Cloudflare
-headers), `revisions.jsonl` (provisional revision history — append-only,
+uptime, and `recentFailures`: the raw status and CDC's own text for the last
+five failures. Read that first when queries fail; it distinguishes a 403 from a
+timeout from a refused query). The same raw text is the `detail` field in
+`queries.jsonl`; `error` there is only what the visitor was shown.
+
+Logs in `logs/`: `queries.jsonl` (usage, real IPs via Cloudflare headers),
+`revisions.jsonl` (provisional revision history — append-only,
 production data, do not seed with test values).
 
 Env (`.env.local`): `GEMINI_API_KEY`, optional `GEMINI_MODEL` override, optional
-`CF_ANALYTICS_TOKEN`.
+`WONDER_USER_AGENT`, optional `CF_ANALYTICS_TOKEN`.
 
 ---
 
@@ -200,6 +247,15 @@ Env (`.env.local`): `GEMINI_API_KEY`, optional `GEMINI_MODEL` override, optional
   across all visitors; one person clicking repeatedly can exhaust it. The
   per-model fallback softens this but does not solve it. Billing on the key is
   the other half.
+- **Queries are held open for their whole duration.** A combined series is
+  ~50 s alone and longer behind other people's queries; past 100 s the tunnel
+  drops the visitor (the page now says the query is still running and to run it
+  again). The request queue is bounded (`lib/wonder/throttle.ts`) so it cannot
+  grow without limit, but the real fix is a job the page polls for, with a
+  queue position, rather than one long request.
+- **The cut points are hand-maintained.** When CDC adds final 2025 data to
+  D158, `AVAILABLE_YEARS`, the labels that say "2018–2024", and
+  `COMBINED_SOURCES` all need moving by hand.
 - **State-level geography** is scoped but unbuilt. Two Socrata datasets on
   `data.cdc.gov` carry it: `fpsi-y8tj` (state/county/tract, counts and **crude**
   rates, trailing-12-month window, suppressed rows arrive as count `"1-9"` with

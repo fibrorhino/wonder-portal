@@ -17,7 +17,7 @@ const FAILING_THRESHOLD = 2;
 /** Keep the last few failure reasons for a human reading the endpoint. */
 const RECENT_FAILURES_KEPT = 5;
 
-interface RecentFailure {
+export interface RecentFailure {
   at: string;
   reason: string;
 }
@@ -69,6 +69,14 @@ export interface HealthSnapshot {
   queries: { cdcCalls: number; failed: number; cacheHits: number };
   startedAt: string;
   uptimeSeconds: number;
+  /**
+   * Why the most recent failures happened, newest first: the raw status and
+   * CDC's own text. This is the one place that detail is visible without
+   * opening the server's log, and "3 consecutive failures" with no reason
+   * attached cannot tell a block (403) from a slow day (timeout) from a query
+   * CDC refused (500 with a message).
+   */
+  recentFailures: RecentFailure[];
 }
 
 export function healthSnapshot(): HealthSnapshot {
@@ -102,6 +110,7 @@ export function healthSnapshot(): HealthSnapshot {
     },
     startedAt: new Date(state.startedAt).toISOString(),
     uptimeSeconds: Math.round((Date.now() - state.startedAt) / 1000),
+    recentFailures: state.recentFailures.map((f) => ({ ...f })),
   };
 }
 

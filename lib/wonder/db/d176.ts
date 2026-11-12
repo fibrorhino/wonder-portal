@@ -154,7 +154,9 @@ const VARIABLES: VariableDef[] = [
     canGroup: true,
     canFilter: true,
     control: { param: "O_race", value: `${DB}.V43` },
+    noAgeAdjusted: true,
     group: "Demographics",
+    note: "Death counts only: CDC returns no population or rates at this level of detail.",
     values: valuesFor("D158.V43"),
   },
   // ---- Cause of death ----

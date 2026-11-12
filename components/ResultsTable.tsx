@@ -14,6 +14,30 @@ const FLAG_STYLE: Record<string, string> = {
   missing: "text-slate-400",
 };
 
+/**
+ * Turn the addresses in a caveat into links. Only CDC's own, and only https:
+ * the text comes from CDC's response, and nothing in it should become a link
+ * to anywhere else.
+ */
+function linkify(text: string): React.ReactNode[] {
+  const parts = text.split(/(https:\/\/wonder\.cdc\.gov\/[^\s)]+)/g);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <a
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-blue-600 hover:underline"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  );
+}
+
 export default function ResultsTable({ table }: { table: ResultTable }) {
   const [showCaveats, setShowCaveats] = useState(false);
 
@@ -122,7 +146,11 @@ export default function ResultsTable({ table }: { table: ResultTable }) {
           {showCaveats && (
             <ul className="mt-2 list-disc space-y-1 pl-5">
               {table.caveats.map((c, i) => (
-                <li key={i}>{c}</li>
+                // Each caveat can carry the address of CDC's help page for it;
+                // an unbroken URL would otherwise push a phone screen sideways.
+                <li key={i} className="break-words">
+                  {linkify(c)}
+                </li>
               ))}
             </ul>
           )}
