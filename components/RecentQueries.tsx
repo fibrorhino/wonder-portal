@@ -23,11 +23,11 @@ export default function RecentQueries({
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
-        <p className="text-xs font-medium text-slate-500">Recent queries</p>
+        <p className="text-xs font-medium text-slate-600">Recent queries</p>
         <button
           type="button"
           onClick={onClear}
-          className="text-[11px] text-slate-400 underline decoration-dotted hover:text-slate-600"
+          className="text-[11px] text-slate-600 underline decoration-dotted hover:text-slate-800"
         >
           clear
         </button>
@@ -45,7 +45,7 @@ export default function RecentQueries({
             <span className="block max-w-[16rem] truncate text-xs font-medium text-slate-700 group-hover:text-violet-800">
               {e.label}
             </span>
-            <span className="block max-w-[16rem] truncate text-[11px] text-slate-400">
+            <span className="block max-w-[16rem] truncate text-[11px] text-slate-500">
               {e.detail} · {relativeTime(e.at)}
             </span>
           </button>

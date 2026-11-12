@@ -13,6 +13,59 @@ function escapeXml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Why CDC will not return an age-adjusted rate for this query, or null when it
+ * will. Phrased to follow "Age-adjusted rate is left out: ".
+ *
+ * One function, because the request builder and the response parser must agree
+ * exactly: the builder decides whether to ask for the column and the parser
+ * decides whether to expect it, and a disagreement shifts every measure one
+ * column sideways without any error.
+ *
+ * The race rule was missing until November 2026. "Race (15 groups)" with the
+ * default measures was refused by CDC every time, and because the refusal
+ * comes back as an HTTP 500 the visitor was told CDC was temporarily
+ * unavailable and to try again in a minute.
+ */
+export function ageAdjustedBlocker(spec: QuerySpec): string | null {
+  const def = getDatabase(spec.database);
+  if (!def.measures.includes("ageAdjustedRate")) {
+    return "this dataset does not publish one";
+  }
+  if (spec.groupBy.slice(0, 5).some((k) => k.startsWith("age"))) {
+    return "it has no meaning for a result grouped by age";
+  }
+  // An age FILTER blocks it in two ways, each refused by CDC in its own words
+  // (verified against the live API 2026-11-11):
+  //   "Standard age-adjusted rates are only available for the ten-year age
+  //    groups."            (any filter on five-year or single-year ages)
+  //   "Please select more than one age group when calculating age-adjusted
+  //    rates."             (a ten-year filter narrowed to one group)
+  // "Suicide among 15-24 year olds, by year" is both the most natural question
+  // to put to this site and exactly the second case.
+  const byKey = variableByKey(def);
+  for (const [key, codes] of Object.entries(spec.filters ?? {})) {
+    if (!key.startsWith("age") || !codes || codes.length === 0) continue;
+    if (key !== "ageTen") {
+      return `CDC only age-adjusts over ten-year age groups, and this query filters by ${byKey[key]?.label ?? key}`;
+    }
+    if (codes.length === 1) {
+      return "CDC needs more than one age group to adjust over, and this query is limited to one";
+    }
+  }
+  const used = [
+    ...spec.groupBy.slice(0, 5),
+    ...Object.entries(spec.filters ?? {})
+      .filter(([, codes]) => codes && codes.length > 0)
+      .map(([key]) => key),
+  ];
+  const blocking = used.find((key) => byKey[key]?.noAgeAdjusted);
+  if (blocking) {
+    return `CDC does not publish one for ${byKey[blocking].label}`;
+  }
+  return null;
+}
+
 /** Build the ordered parameter map for a spec. */
 function buildParams(spec: QuerySpec): Map<string, string[]> {
   // Driven by the dataset definition, not a module constant: every WONDER
@@ -42,11 +95,8 @@ function buildParams(spec: QuerySpec): Map<string, string[]> {
   }
 
   // --- Measures (M1-M3 mandatory; M4 optional) ---
-  const groupingByAge = groupBy.some((k) => k.startsWith("age"));
   const wantsAgeAdjusted =
-    spec.measures.includes("ageAdjustedRate") &&
-    !groupingByAge &&
-    def.measures.includes("ageAdjustedRate");
+    spec.measures.includes("ageAdjustedRate") && ageAdjustedBlocker(spec) === null;
   set("M_1", `${db}.M1`);
   set("M_2", `${db}.M2`);
   set("M_3", `${db}.M3`);
@@ -180,14 +230,8 @@ export function buildRequestXml(spec: QuerySpec): string {
 
 /** Which measure columns the response will contain, in order. */
 export function measureColumns(spec: QuerySpec): MeasureKey[] {
-  const def = getDatabase(spec.database);
-  const groupingByAge = spec.groupBy.some((k) => k.startsWith("age"));
   const cols: MeasureKey[] = ["deaths", "population", "crudeRate"];
-  if (
-    spec.measures.includes("ageAdjustedRate") &&
-    !groupingByAge &&
-    def.measures.includes("ageAdjustedRate")
-  ) {
+  if (spec.measures.includes("ageAdjustedRate") && ageAdjustedBlocker(spec) === null) {
     cols.push("ageAdjustedRate");
   }
   return cols;

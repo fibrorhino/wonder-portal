@@ -52,7 +52,7 @@ export default function MultiSelect({
           <span className="max-w-[14rem] truncate text-xs text-slate-500">
             {summary}
           </span>
-          <span className="text-slate-400">{open ? "▾" : "▸"}</span>
+          <span className="text-slate-500">{open ? "▾" : "▸"}</span>
         </span>
       </button>
       {open && (

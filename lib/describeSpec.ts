@@ -2,7 +2,7 @@
 // state its own filters (important when a chart is exported and viewed away
 // from the app).
 
-import type { QuerySpec } from "./wonder/types";
+import type { QuerySpec, ResultTable } from "./wonder/types";
 import { MANNER_OF_DEATH } from "./wonder/databases";
 import { getDatabase, variableByKey } from "./wonder/db/registry";
 
@@ -104,4 +104,22 @@ export function figureCaption(spec: QuerySpec): string[] {
     );
   }
   return lines;
+}
+
+/**
+ * One line for a figure or a file, saying that some of its age-adjusted rates
+ * were computed by this site rather than published by CDC. Null when none were.
+ *
+ * The table says so on screen ("How this series was assembled"), but a chart
+ * saved as a PNG, a slide, or a spreadsheet leaves the page without that
+ * paragraph, and a computed 2025 rate then sits in a row of CDC's own with
+ * nothing to tell them apart.
+ */
+export function computedRateNote(
+  table: Pick<ResultTable, "sourceNotes"> | undefined,
+): string | null {
+  const note = (table?.sourceNotes ?? []).find((n) => /computed here/i.test(n));
+  if (!note) return null;
+  const span = /Age-adjusted rates for (\S+) were computed here/.exec(note)?.[1];
+  return `Age-adjusted rates for ${span ?? "the provisional years"} were computed by this site and are not published by CDC.`;
 }

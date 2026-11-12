@@ -77,9 +77,29 @@ test("cache hits alone never make it look unhealthy", () => {
 
 test("failure reasons are truncated so the endpoint stays small", () => {
   __resetHealthForTests();
-  recordCdcFailure("x".repeat(5000));
-  // No direct accessor for reasons; assert it did not throw and state is sane.
+  for (let i = 0; i < 12; i++) recordCdcFailure("x".repeat(5000));
   const h = healthSnapshot();
-  assert.equal(h.consecutiveFailures, 1);
+  assert.equal(h.consecutiveFailures, 12);
+  assert.equal(h.recentFailures.length, 5, "only the last few are kept");
+  assert.ok(h.recentFailures.every((f) => f.reason.length <= 200));
   assert.ok(JSON.stringify(h).length < 2000, "health payload should stay small");
+});
+
+// "3 consecutive CDC failures" was all the endpoint said, which cannot tell a
+// block from a timeout from a query CDC refused. The reasons were recorded all
+// along and never returned.
+test("the reasons for recent failures are reported, newest first", () => {
+  __resetHealthForTests();
+  recordCdcFailure("HTTP 403: (no detail)");
+  recordCdcFailure("unreachable: fetch failed");
+  const h = healthSnapshot();
+  assert.deepEqual(
+    h.recentFailures.map((f) => f.reason),
+    ["unreachable: fetch failed", "HTTP 403: (no detail)"],
+  );
+  assert.ok(!Number.isNaN(Date.parse(h.recentFailures[0].at)));
+  // A later success clears the alarm but keeps the history readable.
+  recordCdcSuccess();
+  assert.equal(healthSnapshot().cdc, "ok");
+  assert.equal(healthSnapshot().recentFailures.length, 2);
 });

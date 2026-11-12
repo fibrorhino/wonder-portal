@@ -263,7 +263,7 @@ export default function StatsPanel({
                       </td>
                       <td
                         className={`px-3 py-1.5 text-right tabular-nums ${
-                          pct >= 0 ? "text-rose-600" : "text-emerald-700"
+                          pct >= 0 ? "text-rose-700" : "text-emerald-700"
                         }`}
                       >
                         {pct >= 0 ? "+" : "−"}

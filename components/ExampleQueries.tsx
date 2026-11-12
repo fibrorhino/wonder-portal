@@ -19,7 +19,7 @@ export default function ExampleQueries({
   if (examples.length === 0) return null;
   return (
     <div>
-      <p className="mb-2 text-xs font-medium text-slate-500">Start from an example</p>
+      <p className="mb-2 text-xs font-medium text-slate-600">Start from an example</p>
       {/* One line that scrolls, at every width, matching the recent-query row
           directly below it. It used to wrap at sm: and up, which put a lone
           chip on a second row as soon as there were eight of them. */}
@@ -36,7 +36,7 @@ export default function ExampleQueries({
             <span className="block text-xs font-medium text-slate-700 group-hover:text-blue-800">
               {e.label}
             </span>
-            <span className="block text-[11px] text-slate-400">{e.hint}</span>
+            <span className="block text-[11px] text-slate-500">{e.hint}</span>
           </button>
         ))}
       </div>

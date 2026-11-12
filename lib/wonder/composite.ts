@@ -24,14 +24,66 @@ import {
   type StitchSource,
 } from "./stitch";
 import { ageAdjustedRate, type AgeStratum } from "../stats/ageAdjust";
-
-export type FetchTable = (
-  spec: QuerySpec,
-) => Promise<{ ok: true; table: ResultTable } | { ok: false; error: string; status: number }>;
+import { ageAdjustedBlocker } from "./buildRequest";
 
 type Outcome =
   | { ok: true; table: ResultTable }
-  | { ok: false; error: string; status: number };
+  // `detail` is the raw cause, for the log; `error` is what the visitor reads.
+  | { ok: false; error: string; status: number; detail?: string };
+
+export type FetchTable = (spec: QuerySpec) => Promise<Outcome>;
+
+/**
+ * The years CDC refused, read from its own message: "Invalid 'Year/Month'
+ * codes were found: '2027'. Check the Finder Tool for valid Year/Month codes."
+ *
+ * The combined series runs "to the present", and the present is taken from the
+ * calendar. CDC's provisional file is not: for the first weeks of each January
+ * it has no rows for the new year, and it refuses a request that names one.
+ * Since the composite always names its years, every combined query would fail
+ * from New Year's Day until CDC caught up. Instead the years CDC says it does
+ * not have are dropped and that source is asked once more.
+ */
+export function yearsCdcRejected(message: string): string[] {
+  const m = /Invalid 'Year\/Month' codes were found:\s*([^.]*)\./i.exec(message);
+  if (!m) return [];
+  return [...m[1].matchAll(/'(\d{4})'/g)].map((x) => x[1]);
+}
+
+// Remembered so the lesson is not paid for again (a refusal still costs a
+// fifteen-second slot), but not for long: the year appears as soon as CDC
+// loads it.
+const MISSING_TTL_MS = 6 * 60 * 60 * 1000;
+const missingYears = new Map<string, { years: string[]; expires: number }>();
+
+function knownMissing(databaseId: string): string[] {
+  const entry = missingYears.get(databaseId);
+  if (!entry) return [];
+  if (Date.now() > entry.expires) {
+    missingYears.delete(databaseId);
+    return [];
+  }
+  return entry.years;
+}
+
+function rememberMissing(databaseId: string, years: string[]): void {
+  missingYears.set(databaseId, { years, expires: Date.now() + MISSING_TTL_MS });
+}
+
+/** Test seam. */
+export function __forgetMissingYearsForTests(): void {
+  missingYears.clear();
+}
+
+/** `spec` with these years removed from its year filter. */
+function withoutYears(spec: QuerySpec, years: string[]): QuerySpec {
+  if (years.length === 0) return spec;
+  const kept = (spec.filters.year ?? []).filter((y) => !years.includes(y));
+  // Never empty the list: no year filter at all means "every year", which is
+  // the opposite of what was asked for.
+  if (kept.length === 0) return spec;
+  return { ...spec, filters: { ...spec.filters, year: kept } };
+}
 
 /** The spec to send to one source: its own database, its own slice of years. */
 function specForSource(spec: QuerySpec, source: CompositeSource, allYears: string[]): QuerySpec {
@@ -64,8 +116,18 @@ export async function runComposite(
   const parts: StitchSource[] = [];
   const computedYears: string[] = [];
   for (const { source } of wanted) {
-    const sub = specForSource(spec, source, allYears);
-    const res = await fetchTable(sub);
+    let sub = withoutYears(specForSource(spec, source, allYears), knownMissing(source.databaseId));
+    let res = await fetchTable(sub);
+    // A year the source does not have yet. See yearsCdcRejected.
+    const rejected = res.ok ? [] : yearsCdcRejected(res.detail ?? res.error);
+    if (!res.ok && rejected.length > 0) {
+      const retry = withoutYears(sub, rejected);
+      if ((retry.filters.year ?? []).length > 0) {
+        rememberMissing(source.databaseId, rejected);
+        sub = retry;
+        res = await fetchTable(sub);
+      }
+    }
     if (!res.ok) {
       // One source failing makes the series wrong rather than short, so the
       // whole thing fails and says which part broke.
@@ -73,6 +135,7 @@ export async function runComposite(
         ok: false,
         error: `${getDatabase(source.databaseId).label}: ${res.error}`,
         status: res.status,
+        detail: res.detail ? `${source.databaseId} ${res.detail}` : undefined,
       };
     }
     let table = res.table;
@@ -80,7 +143,10 @@ export async function runComposite(
     // Fill in an age-adjusted rate the source could not supply. The column has
     // to exist first: without it the computed values have nowhere to go, and
     // the join rejects the narrower table as a layout mismatch.
-    if (spec.measures.includes("ageAdjustedRate")) {
+    // Skipped when no source can supply the rate (grouped by age, or an age
+    // filter CDC will not adjust over): the column would be blank from top to
+    // bottom, and the page already says which measures are not in a result.
+    if (spec.measures.includes("ageAdjustedRate") && ageAdjustedBlocker(spec) === null) {
       table = ensureMeasureColumn(table, "ageAdjustedRate", "Age-Adjusted Rate");
       if (needsComputedAdjustment(spec, source)) {
         const filled = await computeAdjustedRates(sub, spec, fetchTable);
@@ -147,6 +213,11 @@ function needsComputedAdjustment(spec: QuerySpec, source: CompositeSource): bool
   // group-by slots is WONDER's hard limit.
   if (spec.groupBy.some((k) => k.startsWith("age"))) return false;
   if (spec.groupBy.length >= 5) return false;
+  // Whatever stops CDC publishing the rate for the final years (an age filter,
+  // chiefly) stops it being computed for the provisional ones too: the strata
+  // would not span the standard population, and the attempt costs a CDC call
+  // and fifteen seconds to find that out.
+  if (ageAdjustedBlocker(spec) !== null) return false;
   return db.variables.some((v) => v.key === "ageTen");
 }
 

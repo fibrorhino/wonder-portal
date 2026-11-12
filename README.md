@@ -88,6 +88,21 @@ Cloud hosting was tried and confirmed blocked. The same codebase works in every
 case with zero changes — only the *machine it runs on* matters, because the
 WONDER call happens in a server-side route.
 
+> **One thing worth re-testing (November 2026).** CDC's edge judges the request
+> as well as the address. From a single cloud address, the same request
+> returned 200 from curl, 403 from Node's `fetch` with its default
+> `User-Agent: node`, and 200 from Node's `fetch` once it sent a plain named
+> User-Agent (see `lib/wonder/userAgent.ts`). The cloud deployments that were
+> blocked (Cloudflare Pages and Vercel, in the earlier `CDCwonder` project) sent
+> a third thing, a copied Chrome User-Agent with matching `origin` and `referer`
+> headers, and got 403. So two request shapes are known to fail from cloud
+> hosts and one is known to pass from one cloud address.
+>
+> **Tried from Vercel the next day, and refused.** A preview build carrying the
+> named User-Agent ran one query from Vercel's `iad1` region on 2026-11-12 and
+> got 403 three times. For Vercel, then, it is the address, and the table above
+> stands. Azure and AWS were not re-tested.
+
 ---
 
 ## How `wonderwall.nestadt.org` is hosted
@@ -108,8 +123,9 @@ is why the site can be public while CDC still sees an allowed IP.
 
 ## Enabling the natural-language box
 
-The box calls `/api/nl`, which uses the **Gemini API** (`gemini-2.5-flash-lite`)
-to translate text into a `QuerySpec`. Gemini's free tier comfortably covers
+The box calls `/api/nl`, which uses the **Gemini API** (the model list in
+`lib/geminiCall.ts`, tried in order, shared with the AI analysis) to translate
+text into a `QuerySpec`. Gemini's free tier comfortably covers
 personal/light use, so this typically costs nothing.
 
 1. Get a free key at https://aistudio.google.com/apikey (sign in with any

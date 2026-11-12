@@ -20,7 +20,7 @@
 // report a release year and inventing one would put a wrong fact in a
 // bibliography. The accession date carries the vintage instead.
 
-import type { QuerySpec, ResultTable } from "./wonder/types";
+import type { MeasureKey, QuerySpec, ResultTable } from "./wonder/types";
 import { getDatabase } from "./wonder/db/registry";
 import { describeGrouping, filterChips } from "./describeSpec";
 
@@ -123,8 +123,14 @@ export function buildMethods(
 
   // --- Which measure, and standardised how ---
   const per = spec.options?.ratePer ?? 100000;
-  const wantsAdjusted = spec.measures.includes("ageAdjustedRate");
-  const wantsCrude = spec.measures.includes("crudeRate");
+  // Read from the table, not the spec. Asking for a measure is not the same as
+  // getting it: the age-adjusted rate is left out when the result is grouped by
+  // age or uses a race classification CDC does not standardise, and a methods
+  // paragraph describing how a column was standardised must not be written for
+  // a column that is not there.
+  const returned = (m: MeasureKey) => table.columns.some((c) => c.measureKey === m);
+  const wantsAdjusted = returned("ageAdjustedRate");
+  const wantsCrude = returned("crudeRate");
   if (wantsAdjusted || wantsCrude) {
     const measures: string[] = [];
     if (wantsCrude) measures.push("crude death rates");

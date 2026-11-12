@@ -5,13 +5,21 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
-import { getDatabase, isKnownDatabase, variableByKey } from "@/lib/wonder/db/registry";
+import { getDatabase } from "@/lib/wonder/db/registry";
 import { runComposite } from "@/lib/wonder/composite";
+import { normalizeSpec, validateSpec } from "@/lib/wonder/validateSpec";
+import { createThrottle, QueueFullError } from "@/lib/wonder/throttle";
+import { wonderUserAgent } from "@/lib/wonder/userAgent";
 import { observe } from "@/lib/revisions";
 import { buildRequestXml } from "@/lib/wonder/buildRequest";
-import { extractError, parseResponse } from "@/lib/wonder/parseResponse";
-import { cdcHttpErrorMessage, cdcNetworkErrorMessage } from "@/lib/wonder/cdcErrors";
-import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
+import { decodeBody, extractError, parseResponse } from "@/lib/wonder/parseResponse";
+import {
+  cdcBusyMessage,
+  cdcHttpErrorMessage,
+  cdcNetworkErrorMessage,
+  isQueryRejection,
+} from "@/lib/wonder/cdcErrors";
+import { cacheGet, cacheKey, cacheSet, FINAL_TTL_MS, PROVISIONAL_TTL_MS } from "@/lib/cache";
 import {
   recordCacheHit,
   recordCdcFailure,
@@ -35,108 +43,28 @@ export const runtime = "nodejs";
 // composite can have.
 export const maxDuration = 300;
 
-function validate(spec: QuerySpec): string | null {
-  if (!spec || typeof spec !== "object") return "Missing query spec.";
-  if (!isKnownDatabase(spec.database)) return `Unknown dataset: ${spec.database}`;
-  // Variables are per-database: D176 has no weekday, education or leading-cause
-  // variable, and validating against D158's registry would wave those through
-  // to a request WONDER then rejects.
-  const VARIABLE_BY_KEY = variableByKey(getDatabase(spec.database));
-  if (!Array.isArray(spec.groupBy) || spec.groupBy.length === 0)
-    return "Select at least one 'Group results by' variable.";
-  if (spec.groupBy.length > 5) return "At most 5 group-by variables.";
-  for (const key of spec.groupBy) {
-    const def = VARIABLE_BY_KEY[key];
-    if (!def) return `Unknown variable: ${key}`;
-    if (!def.canGroup) return `Cannot group by: ${def.label}`;
-  }
-  const dbDef = getDatabase(spec.database);
-  for (const m of spec.measures ?? []) {
-    if (!dbDef.measures.includes(m)) {
-      return `${dbDef.label} does not provide the ${m} measure.`;
-    }
-  }
-  const ageGroups = spec.groupBy.filter((k) => k.startsWith("age"));
-  if (ageGroups.length > 1) return "Only one age grouping at a time.";
-  const raceGroups = spec.groupBy.filter((k) => k.startsWith("race"));
-  if (raceGroups.length > 1) return "Only one race grouping at a time.";
-  for (const key of Object.keys(spec.filters ?? {})) {
-    if (!VARIABLE_BY_KEY[key]) return `Unknown filter variable: ${key}`;
-  }
-  // Several WONDER sections are a single radio: O_ucd selects WHICH cause
-  // framework the query uses (ICD codes | injury intent/mechanism | leading
-  // causes), O_age which age variable, O_race which race variable. Two
-  // variables sharing a selector but needing different values cannot coexist
-  // in one query — and that applies to FILTERS as much as to grouping.
-  // Filtering on both Ten-Year and Five-Year age groups, for instance, used to
-  // be accepted here and then resolved to whichever selector was written last,
-  // so the query silently ran with one of the two age filters ignored.
-  const usedKeys = [
-    ...spec.groupBy,
-    ...Object.entries(spec.filters ?? {})
-      .filter(([, v]) => v && v.length > 0)
-      .map(([k]) => k),
-  ];
-  const bySection = new Map<string, Map<string, string[]>>();
-  for (const key of usedKeys) {
-    const control = VARIABLE_BY_KEY[key]?.control;
-    if (!control) continue;
-    let byValue = bySection.get(control.param);
-    if (!byValue) {
-      byValue = new Map();
-      bySection.set(control.param, byValue);
-    }
-    byValue.set(control.value, [
-      ...(byValue.get(control.value) ?? []),
-      VARIABLE_BY_KEY[key]?.label ?? key,
-    ]);
-  }
+// CDC requires >= 15 s between consecutive API requests, so every outbound
+// WONDER call goes through one queue with enforced spacing. (Cache hits skip
+// it entirely.) The queue is bounded: the tunnel in front of this server drops
+// a request at 100 s, so a call that would start later than this can only end
+// in a timeout for the visitor and a CDC request nobody is waiting for.
+const throttle = createThrottle({ minGapMs: 15_500, maxWaitMs: 75_000 });
 
-  if ((bySection.get("O_ucd")?.size ?? 0) > 1) {
-    return (
-      "Only one cause-of-death framework can be used per query: choose ICD-10 codes, " +
-      "injury intent/mechanism, OR leading causes — not a mix. Run separate queries instead."
-    );
-  }
-  const SECTION_LABEL: Record<string, string> = {
-    O_age: "age variable",
-    O_race: "race variable",
-  };
-  for (const [param, byValue] of bySection) {
-    if (param === "O_ucd" || byValue.size <= 1) continue;
-    // A variable used for BOTH grouping and filtering is collected twice.
-    const names = [...new Set([...byValue.values()].flat())].join(", ");
-    return `Only one ${SECTION_LABEL[param] ?? param} can be used per query, whether grouping or filtering. Remove one of: ${names}.`;
-  }
-  return null;
-}
+type Outcome =
+  | { ok: true; table: ResultTable }
+  | { ok: false; error: string; status: number; detail?: string };
 
-// CDC requires >= 15 s between consecutive API requests. Serialize all outbound
-// WONDER calls through a promise chain with enforced spacing. (Cache hits skip
-// this entirely.)
-const MIN_GAP_MS = 15_500;
-let lastRequestAt = 0;
-let queue: Promise<void> = Promise.resolve();
-
-function throttled<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(async () => {
-    const wait = lastRequestAt + MIN_GAP_MS - Date.now();
-    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    lastRequestAt = Date.now();
-    return fn();
-  });
-  queue = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  return run;
-}
+// Identical queries that arrive while the first is still running share its
+// result. The cache only helps once a query has finished, and a shared link
+// opened by a whole seminar at once is the same query many times over: without
+// this, each copy took its own turn in the 15-second queue.
+const inflight = new Map<string, Promise<{ outcome: Outcome; revisions: Awaited<ReturnType<typeof observe>> }>>();
 
 export async function POST(req: NextRequest) {
   const startedAt = Date.now();
-  let spec: QuerySpec;
+  let body: unknown;
   try {
-    spec = (await req.json()) as QuerySpec;
+    body = await req.json();
   } catch {
     return NextResponse.json(
       { ok: false, error: "Invalid JSON body." },
@@ -144,22 +72,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  spec.filters = spec.filters ?? {};
-  spec.options = spec.options ?? {};
+  const normalized = normalizeSpec(body);
+  if (typeof normalized === "string") {
+    return NextResponse.json({ ok: false, error: normalized }, { status: 400 });
+  }
+  const spec: QuerySpec = normalized;
 
   // Usage log — one line per query. Fire-and-forget; never blocks or throws.
-  const log = (ok: boolean, extra: { cached?: boolean; error?: string } = {}) =>
+  const log = (
+    ok: boolean,
+    extra: { cached?: boolean; error?: string; detail?: string } = {},
+  ) =>
     logQuery(req.headers, {
       kind: "query",
       ok,
       ms: Date.now() - startedAt,
+      database: spec.database,
       groupBy: spec.groupBy,
       measures: spec.measures,
       filters: spec.filters,
       ...extra,
     });
 
-  const invalid = validate(spec);
+  const invalid = validateSpec(spec);
   if (invalid) {
     log(false, { error: invalid });
     return NextResponse.json(
@@ -176,35 +111,101 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(cached);
   }
 
-  // A composite is not a database: it is several, queried in turn and joined.
-  const def = getDatabase(spec.database);
-  const result = def.composite
-    ? await runComposite(spec, def.composite, fetchTable)
-    : await fetchTable(spec);
+  let pending = inflight.get(key);
+  const shared = Boolean(pending);
+  if (!pending) {
+    pending = execute(spec, key).finally(() => inflight.delete(key));
+    inflight.set(key, pending);
+  }
+  const { outcome: result, revisions } = await pending;
 
   if (!result.ok) {
-    log(false, { error: result.error });
+    log(false, { error: result.error, detail: result.detail });
     return NextResponse.json(
       { ok: false, error: result.error, spec } satisfies WonderResponse,
       { status: result.status },
     );
   }
 
-  // Record what the provisional counts look like now, and report what moved
-  // since this query last ran. Only reached on a cache MISS, which is what we
-  // want: a cached result is the same observation, not a new one.
-  const revisions = def.provisional ? await observe(spec, result.table) : null;
-
   const payload: WonderResponse = { ok: true, table: result.table, spec };
-  // Cached WITHOUT the revision report, and cached before it is attached:
-  // "Revised since you last ran this" describes something that happened on
-  // THIS fetch, and replaying it from cache for the next twelve hours would
-  // make one revision look like several. The cache holds this object by
-  // reference, so the report goes on a copy rather than on the cached one.
-  cacheSet(key, payload);
+  // The revision report goes on a copy: the cache holds `payload`'s twin by
+  // reference, and "Revised since you last ran this" describes something that
+  // happened on THIS fetch. Replaying it from cache for the next twelve hours
+  // would make one revision look like several.
   const response: WonderResponse = revisions ? { ...payload, revisions } : payload;
-  log(true, { cached: false });
+  log(true, { cached: shared });
   return NextResponse.json(response);
+}
+
+/**
+ * Fetch a spec from CDC, record what a provisional result looks like now, and
+ * cache it. Runs once per distinct query however many requests are waiting.
+ * Never rejects: a failure is an outcome, so that every waiter gets the same
+ * answer rather than one of them an unhandled exception.
+ */
+async function execute(spec: QuerySpec, key: string) {
+  let outcome: Outcome;
+  try {
+    // A composite is not a database: it is several, queried in turn and joined.
+    const def = getDatabase(spec.database);
+    outcome = def.composite
+      ? await runComposite(spec, def.composite, fetchSourceTable)
+      : await fetchTable(spec);
+    if (!outcome.ok) return { outcome, revisions: null };
+
+    // Only reached on a cache MISS, which is what we want: a cached result is
+    // the same observation, not a new one.
+    const revisions = def.provisional ? await observe(spec, outcome.table) : null;
+    // Cached WITHOUT the revision report; see the note in POST.
+    cacheSet(
+      key,
+      { ok: true, table: outcome.table, spec } satisfies WonderResponse,
+      def.provisional ? PROVISIONAL_TTL_MS : FINAL_TTL_MS,
+    );
+    return { outcome, revisions };
+  } catch (e) {
+    // Reaching here means a bug in parsing or stitching, not a CDC failure.
+    // Say so in the log, and give the visitor something better than a bare 500.
+    console.error("[wonder] unexpected failure:", e);
+    outcome = {
+      ok: false,
+      error: "This result could not be processed. The problem is on this site, not CDC's, and has been logged.",
+      status: 500,
+      detail: `internal: ${e instanceof Error ? e.message : String(e)}`,
+    };
+    return { outcome, revisions: null };
+  }
+}
+
+/**
+ * fetchTable for one part of a combined series, with a memory.
+ *
+ * A combined query is three or four CDC calls fifteen seconds apart, and most
+ * of that is spent re-fetching the two FINAL files, whose answers have not
+ * changed since the last time anyone asked. Each part is cached on its own
+ * spec: when the combined result expires after twelve hours, only the
+ * provisional part has to be fetched again, and a combined query that failed
+ * part-way keeps the parts it already had.
+ *
+ * Nothing downstream changes a table it is handed (the stitcher copies), so
+ * holding these by reference is safe.
+ */
+async function fetchSourceTable(spec: QuerySpec): Promise<Outcome> {
+  const key = `source:${cacheKey(spec)}`;
+  const cached = cacheGet<ResultTable>(key);
+  if (cached) {
+    recordCacheHit();
+    return { ok: true, table: cached };
+  }
+  const outcome = await fetchTable(spec);
+  if (outcome.ok) {
+    cacheSet(
+      key,
+      outcome.table,
+      getDatabase(spec.database).provisional ? PROVISIONAL_TTL_MS : FINAL_TTL_MS,
+    );
+  }
+  return outcome;
 }
 
 /**
@@ -214,9 +215,7 @@ export async function POST(req: NextRequest) {
  * connection handling here was arrived at painfully, and must not be
  * duplicated.
  */
-export async function fetchTable(
-  spec: QuerySpec,
-): Promise<{ ok: true; table: ResultTable } | { ok: false; error: string; status: number }> {
+async function fetchTable(spec: QuerySpec): Promise<Outcome> {
   const xmlRequest = buildRequestXml(spec);
   let xml: string;
   try {
@@ -229,8 +228,12 @@ export async function fetchTable(
     // which is why a fresh process works while the service keeps failing.
     // `Connection: close` forces a new connection per request, and a 403 is
     // retried (rather than surfaced) so a single poisoned connection can't
-    // break the app. We deliberately do NOT spoof a browser User-Agent: it
-    // never helped, and claiming to be Chrome without a browser TLS
+    // break the app.
+    //
+    // The User-Agent names this site. Node's default, the bare string "node",
+    // is refused by CDC's edge outright (lib/wonder/userAgent.ts has the
+    // measurements). We still do NOT claim to be a browser: saying what the
+    // client is is honest, and claiming to be Chrome without a browser TLS
     // fingerprint is itself a bot-detection trigger.
     const doFetch = () =>
       fetch(wonderUrl(getDatabase(spec.database).id), {
@@ -239,30 +242,55 @@ export async function fetchTable(
           "Content-Type": "application/x-www-form-urlencoded",
           Accept: "text/xml, text/html, */*",
           Connection: "close",
+          "User-Agent": wonderUserAgent(),
         },
         body: body.toString(),
-        // WONDER can be slow for big cross-tabs.
-        signal: AbortSignal.timeout(55_000),
+        // WONDER can be slow for big cross-tabs: the provisional file grouped
+        // by single year of age took 76 s when measured (2026-11-11), which a
+        // 55 s limit turned into a failure every time. The tunnel gives up on
+        // the visitor's connection at 100 s, but the server does not stop when
+        // it does. It finishes and caches the result, so their next attempt
+        // loads at once. A limit shorter than CDC's worst case means there is
+        // nothing to load.
+        signal: AbortSignal.timeout(90_000),
       });
 
-    let res = await throttled(doFetch);
+    let res = await throttle.run(doFetch);
     for (let attempt = 0; attempt < 2 && res.status === 403; attempt++) {
       await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-      res = await throttled(doFetch);
+      res = await throttle.run(doFetch);
     }
 
-    xml = await res.text();
+    xml = decodeBody(await res.arrayBuffer(), res.headers.get("content-type"));
     if (!res.ok) {
-      // The raw status and CDC's own text go to health + the usage log; the
-      // visitor gets wording that makes clear this is CDC's side, not ours.
-      const detail = extractError(xml);
-      recordCdcFailure(`HTTP ${res.status}: ${detail ?? "(no detail)"}`);
-      return { ok: false, error: cdcHttpErrorMessage(res.status, detail), status: 502 };
+      // The raw status and CDC's own text go to /api/health, the usage log and
+      // the server console; the visitor gets wording that makes clear whose
+      // problem it is.
+      const cdcText = extractError(xml);
+      const detail = `HTTP ${res.status}: ${cdcText ?? "(no detail)"}`;
+      console.warn(`[wonder] ${spec.database} ${detail}`);
+      // CDC answers a query it will not run with a 500 and an explanation.
+      // That is a refusal of this query, not an outage, and counting it as one
+      // would turn the health check red over something a visitor typed.
+      if (isQueryRejection(res.status, cdcText)) recordCdcSuccess();
+      else recordCdcFailure(detail);
+      return {
+        ok: false,
+        error: cdcHttpErrorMessage(res.status, cdcText),
+        status: 502,
+        detail,
+      };
     }
   } catch (e) {
+    if (e instanceof QueueFullError) {
+      // Never reached CDC, so it says nothing about CDC's health.
+      return { ok: false, error: cdcBusyMessage(), status: 503, detail: "queue full" };
+    }
     const msg = e instanceof Error ? e.message : String(e);
-    recordCdcFailure(`unreachable: ${msg}`);
-    return { ok: false, error: cdcNetworkErrorMessage(e), status: 502 };
+    const detail = `unreachable: ${msg}`;
+    console.warn(`[wonder] ${spec.database} ${detail}`);
+    recordCdcFailure(detail);
+    return { ok: false, error: cdcNetworkErrorMessage(e), status: 502, detail };
   }
 
   const wonderError = extractError(xml);
@@ -271,7 +299,12 @@ export async function fetchTable(
     // query, not an outage. Recorded as a success for health purposes so a
     // malformed query cannot make the site look down.
     recordCdcSuccess();
-    return { ok: false, error: `CDC WONDER: ${wonderError}`, status: 502 };
+    return {
+      ok: false,
+      error: `CDC WONDER: ${wonderError}`,
+      status: 502,
+      detail: `HTTP 200: ${wonderError}`,
+    };
   }
 
   recordCdcSuccess();

@@ -125,20 +125,27 @@ export function describeQuota(f: QuotaFailure): string {
  * back tomorrow — and the message should only claim to know which when the
  * body actually said.
  */
-export function quotaMessage(f: QuotaFailure | null): string {
+export function quotaMessage(
+  f: QuotaFailure | null,
+  feature: "analysis" | "ask" = "analysis",
+): string {
+  // What is limited, and what still works without it.
+  const subject = feature === "ask" ? "The plain-English box" : "AI analysis";
   const tail =
-    " The talking points below are computed directly from the data and do not need the AI.";
+    feature === "ask"
+      ? " The query builder below does not need the AI."
+      : " The talking points below are computed directly from the data and do not need the AI.";
   if (f?.daily) {
     return (
-      "AI analysis has reached its daily free-tier limit, which resets at midnight Pacific." + tail
+      `${subject} has reached its daily free-tier limit, which resets at midnight Pacific.` + tail
     );
   }
   if (f?.retryDelaySeconds !== null && f?.retryDelaySeconds !== undefined) {
     const secs = Math.max(1, Math.ceil(f.retryDelaySeconds));
-    return `AI analysis is rate-limited for about ${secs} more second${secs === 1 ? "" : "s"}. Try again shortly.${tail}`;
+    return `${subject} is rate-limited for about ${secs} more second${secs === 1 ? "" : "s"}. Try again shortly.${tail}`;
   }
   return (
-    "AI analysis is rate-limited right now. This usually clears within a minute — try again shortly." +
+    `${subject} is rate-limited right now. This usually clears within a minute — try again shortly.` +
     " If it keeps happening, the daily free-tier limit has been reached and resets at midnight Pacific." +
     tail
   );

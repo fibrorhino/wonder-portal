@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import type { QuerySpec, ResultCell, ResultColumn, ResultTable } from "../wonder/types";
 import { buildFactSheet, keyFigures, renderFactSheet } from "./facts";
 import { buildAllowSet, verifyStatements } from "./verify";
+import { talkingPoints } from "../insights";
+import { parseResponse } from "../wonder/parseResponse";
+import { D176_RESPONSE_XML } from "../wonder/fixtures/d176Response";
 
 const n = (v: number): ResultCell => ({ value: v, raw: String(v) });
 const s = (v: string): ResultCell => ({ value: v, raw: v });
@@ -523,4 +526,51 @@ test("a result made up entirely of partial periods still renders", () => {
   const sheet = renderFactSheet(f);
   assert.match(sheet, /8,316/, "the count survives");
   assert.ok(!/lowest:/.test(sheet), "no comparison is offered");
+});
+
+// ---------------------------------------------------------------------------
+// Prose about incomplete periods (lib/insights.ts).
+// ---------------------------------------------------------------------------
+
+test("a partial year is named in prose without its axis annotation", () => {
+  // The real provisional response: its last year is "2026 (provisional and
+  // partial)". The bullets already say the period is incomplete; repeating the
+  // bracketed label mid-sentence read "2026 (provisional and partial) covers
+  // only part of the period".
+  const d176: QuerySpec = {
+    database: "D176",
+    groupBy: ["year"],
+    measures: ["deaths", "population", "crudeRate"],
+    filters: { injuryIntent: ["2"] },
+    options: { ratePer: 100000 },
+  };
+  const points = talkingPoints(parseResponse(D176_RESPONSE_XML, d176), d176);
+  const caveat = points.find((p) => p.startsWith("These are provisional data"));
+  assert.ok(caveat, points.join("\n"));
+  assert.match(caveat!, /provisional data\. 2026 covers only part of the period/);
+  const trend = points.find((p) => p.startsWith("Across the period"));
+  assert.match(trend!, /2026 is left out of this comparison/);
+  // The endpoint of the trend keeps its annotation: "provisional" there is
+  // information about the number being quoted.
+  assert.match(trend!, /in 2025 \(provisional\)\./);
+});
+
+test("many partial periods are given as a span, not a list", () => {
+  // Grouped by month, every month of the current year is partial. Listing
+  // them made one bullet nine labels long.
+  const months = ["Nov., 2025", "Dec., 2025", "Jan., 2026 (provisional)"];
+  const partial = ["Feb.", "Mar.", "Apr.", "May", "Jun."].map(
+    (m) => `${m}, 2026 (provisional and partial)`,
+  );
+  const table = makeTable(
+    [{ key: "month", label: "Month" }],
+    ["deaths"],
+    [...months, ...partial].map((label, i) => [s(label), n(4000 - i * 10)]),
+  );
+  const monthly: QuerySpec = { ...spec(["month"]), database: "D176" };
+  const points = talkingPoints(table, monthly);
+  const caveat = points.find((p) => p.startsWith("These are provisional data"));
+  assert.ok(caveat, points.join("\n"));
+  assert.match(caveat!, /The 5 periods from Feb\., 2026 to Jun\., 2026 cover only part/);
+  assert.ok(!/partial\) and/.test(points.join("\n")), points.join("\n"));
 });

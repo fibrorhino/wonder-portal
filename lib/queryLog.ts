@@ -104,13 +104,20 @@ export interface QueryLogEntry {
   ms: number;
   cached?: boolean;
   /** kind === "query" */
+  database?: string;
   groupBy?: string[];
   measures?: string[];
   filters?: Record<string, string[]>;
   /** kind === "nl" */
   text?: string;
-  /** Populated on failures. */
+  /** Populated on failures: what the visitor was told. */
   error?: string;
+  /**
+   * Populated on failures: what actually happened, meaning the raw status and CDC's
+   * (or Gemini's) own text. `error` is worded for the visitor and deliberately
+   * hides this, which made the log useless for telling a block from a timeout.
+   */
+  detail?: string;
 }
 
 async function rotateIfNeeded(): Promise<void> {

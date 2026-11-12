@@ -67,6 +67,25 @@ Both should say `RUNNING`.
 
 ## Deploying a code change
 
+**The short way:** double-click `tools\deploy.bat` (or run it from a Command
+Prompt). It asks for an Administrator window, pulls `origin/main`, stops the
+app, runs `npm install` and `npm run build`, starts the app again and checks
+that it answers. It does nothing if `main` is already what is deployed, and it
+refuses to run over uncommitted local edits. The site is down for the two or
+three minutes the install and build take. That is deliberate: the build
+rewrites the folder the running app reads from, and an upgrade of Next.js
+swaps the framework out from under it.
+
+The very first time, the script is not on the machine yet, so fetch it first:
+
+```
+cd /d C:\dev\wonderwall
+git pull
+tools\deploy.bat
+```
+
+**By hand**, which is what the script does:
+
 ```
 cd /d C:\dev\wonderwall
 git status            REM must be clean before you start

@@ -1,18 +1,38 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import type { QuerySpec, ResultCell, ResultColumn, ResultTable } from "./wonder/types";
+import type { MeasureKey, QuerySpec, ResultCell, ResultColumn, ResultTable } from "./wonder/types";
 import { buildMethods, methodsForClipboard } from "./methods";
 
 const n = (v: number): ResultCell => ({ value: v, raw: String(v) });
 const s = (v: string): ResultCell => ({ value: v, raw: v });
 const AT = new Date("2026-09-09T12:00:00Z");
 
-function yearTable(years: string[], sourceNotes?: string[]): ResultTable {
+const MEASURE_COLUMNS: Record<MeasureKey, ResultColumn> = {
+  deaths: { key: "m_deaths", label: "Deaths", kind: "measure", measureKey: "deaths" },
+  population: { key: "m_population", label: "Population", kind: "measure", measureKey: "population" },
+  crudeRate: { key: "m_crudeRate", label: "Crude Rate", kind: "measure", measureKey: "crudeRate" },
+  ageAdjustedRate: {
+    key: "m_ageAdjustedRate",
+    label: "Age-Adjusted Rate",
+    kind: "measure",
+    measureKey: "ageAdjustedRate",
+  },
+};
+
+// The measure columns default to all four, which is what the default spec
+// below gets back from CDC. The methods text is written from the columns that
+// were returned, so a fixture with fewer columns than the spec asked for
+// describes a different result.
+function yearTable(
+  years: string[],
+  sourceNotes?: string[],
+  measures: MeasureKey[] = ["deaths", "population", "crudeRate", "ageAdjustedRate"],
+): ResultTable {
   const columns: ResultColumn[] = [
     { key: "dim_year", label: "Year", kind: "dimension", variableKey: "year" },
-    { key: "m_deaths", label: "Deaths", kind: "measure", measureKey: "deaths" },
+    ...measures.map((m) => MEASURE_COLUMNS[m]),
   ];
-  const rows = years.map((y) => [s(y), n(1000)]);
+  const rows = years.map((y) => [s(y), ...measures.map(() => n(1000))]);
   return {
     columns,
     rows,
@@ -39,6 +59,21 @@ test("the methods name the database, the selection and the standard population",
   assert.match(m.methods, /manner was Suicide/);
   assert.match(m.methods, /2000 US standard population/);
   assert.match(m.methods, /per 100,000/);
+});
+
+test("standardisation is described only when the column came back", () => {
+  // Grouping by age, or by a race classification CDC does not standardise,
+  // drops the age-adjusted rate from the result even though the spec still
+  // lists it. The paragraph used to follow the spec and describe a column the
+  // table did not have.
+  const noAdjusted = yearTable(["2018", "2024"], undefined, ["deaths", "population", "crudeRate"]);
+  const m = buildMethods(spec(), noAdjusted, AT);
+  assert.match(m.methods, /Crude death rates are expressed per 100,000/);
+  assert.ok(!/age-adjusted/i.test(m.methods), m.methods);
+  assert.ok(!/standard population/i.test(m.methods), m.methods);
+
+  const countsOnly = buildMethods(spec(), yearTable(["2020"], undefined, ["deaths"]), AT);
+  assert.ok(!/expressed per/.test(countsOnly.methods), countsOnly.methods);
 });
 
 test("suppression and the national-only limit are always stated", () => {

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { QuerySpec, ResultTable, WonderResponse } from "@/lib/wonder/types";
+import { ALL_MEASURES } from "@/lib/wonder/types";
+import { ageAdjustedBlocker } from "@/lib/wonder/buildRequest";
 import { talkingPoints } from "@/lib/insights";
 import { safeJson } from "@/lib/safeJson";
 import { filterChips } from "@/lib/describeSpec";
@@ -76,7 +78,16 @@ export default function Home() {
   // render rather than via an effect.
   const [ai, setAi] = useState<{ table: ResultTable; analysis: Analysis } | null>(null);
 
+  // Each run takes a number, and only the latest one may touch the page. The
+  // Run button is disabled while a query is out, but the plain-English box, a
+  // pasted link (hashchange) and the history list are not all behind it, and a
+  // slow first query finishing after a fast second one used to overwrite the
+  // newer result, stop its timer and clear its "Querying…" state.
+  const runSeq = useRef(0);
+
   const run = async (specToRun: QuerySpec = spec, landOnTab: Tab = "table") => {
+    const seq = ++runSeq.current;
+    const isCurrent = () => runSeq.current === seq;
     setLoading(true);
     setError(null);
     setElapsed(0);
@@ -95,8 +106,17 @@ export default function Home() {
         body: JSON.stringify(specToRun),
       });
       const parsed = await safeJson<WonderResponse>(res);
+      if (!isCurrent()) return;
       if (!parsed.ok) {
-        setError(parsed.error);
+        // 524/504 is the tunnel giving up on a long request (a combined series
+        // behind other people's queries can pass its 100 seconds). The server
+        // does not stop when that happens: it finishes the query and caches the
+        // result, so "try again" is not a platitude here, it is the fix.
+        setError(
+          res.status === 524 || res.status === 504
+            ? "This query took longer than the connection allows, but it is still running on the server. Run it again in about a minute and the result will usually load at once."
+            : parsed.error,
+        );
         setResult(null);
         return;
       }
@@ -113,12 +133,21 @@ export default function Home() {
         if (window.matchMedia("(max-width: 1023px)").matches) setBuilderOpen(false);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error.");
+      if (!isCurrent()) return;
+      // fetch rejects with a TypeError whose message is the browser's own
+      // ("Failed to fetch", "Load failed", "NetworkError when attempting to
+      // fetch resource."). None of those tells a visitor anything.
+      console.error("Query request failed:", e);
+      setError(
+        "Could not reach the server. Check your connection and run the query again; if a long query was under way, it may load at once on a second try.",
+      );
       setResult(null);
     } finally {
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = null;
-      setLoading(false);
+      if (isCurrent()) {
+        if (timerRef.current) clearInterval(timerRef.current);
+        timerRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -231,6 +260,19 @@ export default function Home() {
     applyAndRun({ ...result.spec, groupBy: ["year", "month"] });
   };
 
+  // Measures the query asked for that the result does not contain. Deaths is
+  // always returned; the others depend on what was grouped and filtered.
+  const resultSpec = result?.spec;
+  const missingMeasures =
+    table && resultSpec
+      ? ALL_MEASURES.filter(
+          (m) =>
+            resultSpec.measures.includes(m.key) &&
+            !table.columns.some((c) => c.measureKey === m.key),
+        )
+      : [];
+  const adjustedBlocker = resultSpec ? ageAdjustedBlocker(resultSpec) : null;
+
   // The chart and stats panels address columns by numeric index. When a new
   // query returns a different column layout those indices point at the wrong
   // column (silently charting/analysing the wrong field), so the panels are
@@ -339,12 +381,12 @@ export default function Home() {
                       minute. Saying so up front keeps that from reading as a
                       hang and stops people clicking again. */}
                   {getDatabase(spec.database).composite ? (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500">
                       {elapsed}s elapsed — a combined series is several queries run one
                       after another, spaced by CDC&apos;s rate limit. Expect around a minute.
                     </p>
                   ) : (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500">
                       {elapsed}s elapsed
                       {elapsed >= 12
                         ? " — CDC requires at least 15 seconds between queries, so the first one after another can wait."
@@ -356,7 +398,7 @@ export default function Home() {
             )}
 
             {!table && !error && !loading && (
-              <div className="flex h-64 items-center justify-center text-center text-slate-400">
+              <div className="flex h-64 items-center justify-center text-center text-slate-500">
                 <div>
                   <p className="text-sm">
                     Pick an example above, or build a query on the left and click{" "}
@@ -431,6 +473,23 @@ export default function Home() {
                       ))
                     )}
                   </div>
+                )}
+
+                {/* A measure that was ticked but is not in the table. Without
+                    this the column is simply absent, and the visitor is left
+                    to wonder whether they forgot to ask for it. */}
+                {missingMeasures.length > 0 && (
+                  <p className="mb-3 text-xs text-slate-500">
+                    <span className="font-medium text-slate-600">Not in this result:</span>{" "}
+                    {missingMeasures.map((m) => m.label.replace(/ \(per 100k\)$/, "")).join(", ")}.{" "}
+                    {missingMeasures.length === 1 &&
+                    missingMeasures[0].key === "ageAdjustedRate" &&
+                    adjustedBlocker
+                      ? `It is left out because ${adjustedBlocker}.`
+                      : "CDC does not return " +
+                        (missingMeasures.length === 1 ? "it" : "them") +
+                        " for this combination of grouping and filters."}
+                  </p>
                 )}
 
                 {/* How much the provisional counts moved since this same query

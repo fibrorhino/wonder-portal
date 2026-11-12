@@ -15,6 +15,7 @@ import {
   NONINJURY_MECHANISMS,
 } from "@/lib/wonder/databases";
 import { getDatabase, variableByKey } from "@/lib/wonder/db/registry";
+import { ageAdjustedBlocker } from "@/lib/wonder/buildRequest";
 import MultiSelect from "./MultiSelect";
 import { DataUseFootnote, DataUseMark } from "./DataUseNotice";
 import PillSelect from "./PillSelect";
@@ -31,6 +32,9 @@ const FILTER_KEYS = [
   "race6",
   "race15",
   "race31",
+  // The 1999-2020 file's only race variable. It could be grouped by but was
+  // missing from this list, so that file offered no way to filter by race.
+  "raceBridged",
   "hispanicOrigin",
   "education",
   "weekday",
@@ -59,6 +63,8 @@ export default function QueryBuilder({
   const VARIABLE_BY_KEY = useMemo(() => variableByKey(db), [db]);
   const groupableVars = useMemo(() => db.variables.filter((v) => v.canGroup), [db]);
   const ICD_PRESETS = db.icdPresets;
+  // Why this query would come back without an age-adjusted rate, if it would.
+  const adjustedBlocker = ageAdjustedBlocker(spec);
 
   const setFilters = (filters: Record<string, string[]>) =>
     onChange({ ...spec, filters });
@@ -288,7 +294,7 @@ export default function QueryBuilder({
             </div>
           ))}
           {spec.groupBy.length === 0 && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               Add at least one grouping (e.g. Year).
             </p>
           )}
@@ -297,6 +303,7 @@ export default function QueryBuilder({
           <select
             value=""
             onChange={(e) => addGroup(e.target.value)}
+            aria-label="Add a variable to group results by"
             className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
             <option value="">+ Add grouping…</option>
@@ -355,9 +362,22 @@ export default function QueryBuilder({
             </label>
           ))}
         </div>
-        <p className="mt-1 text-xs text-slate-400">
-          Age-adjusted rate is unavailable when grouping by age.
-        </p>
+        {/* Says what will actually happen to THIS query. The old fixed line
+            covered only age, so a query using the 15- or 31-group race
+            classification gave no warning that the column would be missing. */}
+        {adjustedBlocker && spec.measures.includes("ageAdjustedRate") ? (
+          <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+            Age-adjusted rate will be left out of this query: {adjustedBlocker}.
+          </p>
+        ) : (
+          db.measures.includes("ageAdjustedRate") && (
+            <p className="mt-1 text-xs text-slate-500">
+              Age-adjusted rate is unavailable when grouping by age, when
+              filtering to one age group or to five-year ages, and with the 15-
+              or 31-group race classifications.
+            </p>
+          )
+        )}
       </section>
 
       {/* Display options */}

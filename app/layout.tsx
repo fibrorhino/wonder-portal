@@ -13,10 +13,21 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// The description is what a search result and a pasted link show. It said
+// "Single Race, 2018–2024" long after the site gained the provisional file,
+// the 1999–2020 file and the combined series.
+const DESCRIPTION =
+  "Query, chart and analyze U.S. mortality data from CDC WONDER, 1999 to the present: suicide, overdose and every other cause of death, by year, age, sex and race, with rates, statistics and exportable figures.";
+
 export const metadata: Metadata = {
   title: "Mortality Data Portal",
-  description:
-    "Query, analyze, and visualize CDC WONDER Underlying Cause of Death (Single Race, 2018–2024) data with customizable tables, figures, and statistics.",
+  description: DESCRIPTION,
+  openGraph: {
+    title: "Mortality Data Portal",
+    description: DESCRIPTION,
+    type: "website",
+    siteName: "Mortality Data Portal",
+  },
 };
 
 // Cloudflare Web Analytics: cookieless page-view stats (visitors, referrers,
