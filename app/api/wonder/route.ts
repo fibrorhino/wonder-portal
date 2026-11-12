@@ -19,7 +19,7 @@ import {
   cdcNetworkErrorMessage,
   isQueryRejection,
 } from "@/lib/wonder/cdcErrors";
-import { cacheGet, cacheKey, cacheSet } from "@/lib/cache";
+import { cacheGet, cacheKey, cacheSet, FINAL_TTL_MS, PROVISIONAL_TTL_MS } from "@/lib/cache";
 import {
   recordCacheHit,
   recordCdcFailure,
@@ -149,7 +149,7 @@ async function execute(spec: QuerySpec, key: string) {
     // A composite is not a database: it is several, queried in turn and joined.
     const def = getDatabase(spec.database);
     outcome = def.composite
-      ? await runComposite(spec, def.composite, fetchTable)
+      ? await runComposite(spec, def.composite, fetchSourceTable)
       : await fetchTable(spec);
     if (!outcome.ok) return { outcome, revisions: null };
 
@@ -157,7 +157,11 @@ async function execute(spec: QuerySpec, key: string) {
     // the same observation, not a new one.
     const revisions = def.provisional ? await observe(spec, outcome.table) : null;
     // Cached WITHOUT the revision report; see the note in POST.
-    cacheSet(key, { ok: true, table: outcome.table, spec } satisfies WonderResponse);
+    cacheSet(
+      key,
+      { ok: true, table: outcome.table, spec } satisfies WonderResponse,
+      def.provisional ? PROVISIONAL_TTL_MS : FINAL_TTL_MS,
+    );
     return { outcome, revisions };
   } catch (e) {
     // Reaching here means a bug in parsing or stitching, not a CDC failure.
@@ -171,6 +175,37 @@ async function execute(spec: QuerySpec, key: string) {
     };
     return { outcome, revisions: null };
   }
+}
+
+/**
+ * fetchTable for one part of a combined series, with a memory.
+ *
+ * A combined query is three or four CDC calls fifteen seconds apart, and most
+ * of that is spent re-fetching the two FINAL files, whose answers have not
+ * changed since the last time anyone asked. Each part is cached on its own
+ * spec: when the combined result expires after twelve hours, only the
+ * provisional part has to be fetched again, and a combined query that failed
+ * part-way keeps the parts it already had.
+ *
+ * Nothing downstream changes a table it is handed (the stitcher copies), so
+ * holding these by reference is safe.
+ */
+async function fetchSourceTable(spec: QuerySpec): Promise<Outcome> {
+  const key = `source:${cacheKey(spec)}`;
+  const cached = cacheGet<ResultTable>(key);
+  if (cached) {
+    recordCacheHit();
+    return { ok: true, table: cached };
+  }
+  const outcome = await fetchTable(spec);
+  if (outcome.ok) {
+    cacheSet(
+      key,
+      outcome.table,
+      getDatabase(spec.database).provisional ? PROVISIONAL_TTL_MS : FINAL_TTL_MS,
+    );
+  }
+  return outcome;
 }
 
 /**

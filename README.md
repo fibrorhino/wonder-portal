@@ -96,9 +96,12 @@ WONDER call happens in a server-side route.
 > blocked (Cloudflare Pages and Vercel, in the earlier `CDCwonder` project) sent
 > a third thing, a copied Chrome User-Agent with matching `origin` and `referer`
 > headers, and got 403. So two request shapes are known to fail from cloud
-> hosts and one is known to pass from one cloud address; the passing shape has
-> not been tried from Vercel or Azure. The table above is what was observed,
-> and it may be about the request as much as the machine.
+> hosts and one is known to pass from one cloud address.
+>
+> **Tried from Vercel the next day, and refused.** A preview build carrying the
+> named User-Agent ran one query from Vercel's `iad1` region on 2026-11-12 and
+> got 403 three times. For Vercel, then, it is the address, and the table above
+> stands. Azure and AWS were not re-tested.
 
 ---
 

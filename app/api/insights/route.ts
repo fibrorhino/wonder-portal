@@ -22,6 +22,7 @@ import { pointsFromFacts } from "@/lib/insights";
 import { createCache } from "@/lib/cache";
 import { quotaMessage } from "@/lib/geminiQuota";
 import { callGemini, geminiModelChain, geminiText } from "@/lib/geminiCall";
+import { analysisLimiter, visitorKey, waitPhrase } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -144,6 +145,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { ok: false, error: "AI analysis is not configured. Set GEMINI_API_KEY to enable it." },
       { status: 501 },
+    );
+  }
+
+  // Counted here, after the cache: an analysis somebody else already paid for
+  // costs nothing and is never refused.
+  const allowed = analysisLimiter.take(visitorKey(req.headers));
+  if (!allowed.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `AI analysis has been used a lot from your network in the last while. It will be available again in ${waitPhrase(allowed.retryAfterSeconds)}. The talking points below are computed directly from the data and do not need it.`,
+      },
+      { status: 429, headers: { "Retry-After": String(allowed.retryAfterSeconds) } },
     );
   }
 

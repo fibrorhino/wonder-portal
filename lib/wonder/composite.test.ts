@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import type { QuerySpec, ResultCell, ResultTable } from "./types";
 import { __forgetMissingYearsForTests, runComposite, yearsCdcRejected } from "./composite";
 import { COMBINED_SOURCES } from "./db/combined";
+import { measureColumns } from "./buildRequest";
 import { standardAgeLabels } from "../stats/ageAdjust";
 
 const s = (v: string): ResultCell => ({ value: v, raw: v });
@@ -24,7 +25,12 @@ function stubFetcher() {
     calls.push(spec);
     const years = spec.filters?.year ?? [];
     const byAge = spec.groupBy.includes("ageTen");
-    const publishesAdjusted = spec.database !== "D176";
+    const provisional = spec.database === "D176";
+    // What the real endpoint would send back: the final files publish the
+    // rate, but only for a query CDC will standardise (not one narrowed to a
+    // single age group, for instance), which is exactly what measureColumns
+    // encodes for the parser.
+    const publishesAdjusted = !provisional && measureColumns(spec).includes("ageAdjustedRate");
 
     const columns: ResultTable["columns"] = [
       { key: "dim_year", label: "Year", kind: "dimension", variableKey: "year" },
@@ -57,7 +63,7 @@ function stubFetcher() {
     // WONDER annotates the year label itself on the provisional file, e.g.
     // "2026 (provisional and partial)" — which is what the join and the notes
     // actually have to cope with.
-    const label = (y: string) => (publishesAdjusted ? y : `${y} (provisional)`);
+    const label = (y: string) => (provisional ? `${y} (provisional)` : y);
 
     const rows: ResultCell[][] = [];
     for (const y of years) {
@@ -289,6 +295,8 @@ test("an age filter CDC will not adjust over costs no companion query", async ()
     COMBINED_SOURCES,
     fetchTable,
   );
-  assert.ok(out.ok);
+  assert.ok(out.ok, out.ok ? "" : out.error);
   assert.equal(calls.filter((c) => c.groupBy.includes("ageTen")).length, 0);
+  // And no column of blanks where the rate would have been.
+  assert.ok(!out.table.columns.some((c) => c.measureKey === "ageAdjustedRate"));
 });

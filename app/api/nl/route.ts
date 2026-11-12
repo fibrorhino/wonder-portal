@@ -12,6 +12,7 @@ import { buildSchemaContext } from "@/lib/wonder/schemaContext";
 import { logQuery } from "@/lib/queryLog";
 import { callGemini, geminiModelChain, geminiText } from "@/lib/geminiCall";
 import { quotaMessage } from "@/lib/geminiQuota";
+import { askLimiter, visitorKey, waitPhrase } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -287,6 +288,17 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ ok: false, error }, { status });
   };
+
+  const allowed = askLimiter.take(visitorKey(req.headers));
+  if (!allowed.ok) {
+    const res = fail(
+      429,
+      `The plain-English box has been used a lot from your network in the last while. It will be available again in ${waitPhrase(allowed.retryAfterSeconds)}. The query builder below does not need it.`,
+      "per-visitor limit",
+    );
+    res.headers.set("Retry-After", String(allowed.retryAfterSeconds));
+    return res;
+  }
 
   const call = await callGemini({
     key,

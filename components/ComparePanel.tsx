@@ -30,11 +30,11 @@ function Delta({
    *  rounded to "17" reads as a whole-number count. */
   decimals?: number;
 }) {
-  if (value === null || !Number.isFinite(value)) return <span className="text-slate-400">—</span>;
+  if (value === null || !Number.isFinite(value)) return <span className="text-slate-500">—</span>;
   const up = value > 0;
   const flat = value === 0;
   return (
-    <span className={flat ? "text-slate-500" : up ? "text-rose-600" : "text-emerald-700"}>
+    <span className={flat ? "text-slate-600" : up ? "text-rose-700" : "text-emerald-700"}>
       {flat ? "" : up ? "▲ " : "▼ "}
       {fmt(Math.abs(value), decimals)}
       {suffix}
@@ -201,7 +201,7 @@ export default function ComparePanel({
         </div>
       )}
 
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-slate-500">
         Sorted by the size of the difference. ▲ means B is higher than A. Rows present in only
         one result show “—”. Counts are compared as returned; suppressed cells (1–9 deaths) are
         missing from both sides and are not interpolated.

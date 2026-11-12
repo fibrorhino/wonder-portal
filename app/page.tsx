@@ -381,12 +381,12 @@ export default function Home() {
                       minute. Saying so up front keeps that from reading as a
                       hang and stops people clicking again. */}
                   {getDatabase(spec.database).composite ? (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500">
                       {elapsed}s elapsed — a combined series is several queries run one
                       after another, spaced by CDC&apos;s rate limit. Expect around a minute.
                     </p>
                   ) : (
-                    <p className="mt-1 text-xs text-slate-400">
+                    <p className="mt-1 text-xs text-slate-500">
                       {elapsed}s elapsed
                       {elapsed >= 12
                         ? " — CDC requires at least 15 seconds between queries, so the first one after another can wait."
@@ -398,7 +398,7 @@ export default function Home() {
             )}
 
             {!table && !error && !loading && (
-              <div className="flex h-64 items-center justify-center text-center text-slate-400">
+              <div className="flex h-64 items-center justify-center text-center text-slate-500">
                 <div>
                   <p className="text-sm">
                     Pick an example above, or build a query on the left and click{" "}

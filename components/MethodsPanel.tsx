@@ -75,7 +75,7 @@ export default function MethodsPanel({
               ))}
             </ol>
           </div>
-          <p className="text-[11px] text-slate-400">
+          <p className="text-[11px] text-slate-500">
             Generated from the query that produced this table, accessed {m.accessed}. CDC
             WONDER&apos;s API does not return a citation, so this follows the format its web
             interface prints — worth checking once against your journal&apos;s requirements.

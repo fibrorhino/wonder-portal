@@ -166,7 +166,7 @@ export default function InsightsPanel({
         </ul>
       )}
 
-      <p className="mt-3 text-xs text-slate-400">
+      <p className="mt-3 text-xs text-slate-500">
         {isAi
           ? `Written by AI from figures computed directly from this table; every number was checked against the data before display${
               analysis && analysis.dropped > 0

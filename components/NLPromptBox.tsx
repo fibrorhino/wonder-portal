@@ -80,7 +80,7 @@ export default function NLPromptBox({
           className={`rounded-full px-2 py-0.5 text-xs font-medium ${
             enabled
               ? "bg-emerald-100 text-emerald-700"
-              : "bg-slate-100 text-slate-500"
+              : "bg-slate-100 text-slate-600"
           }`}
         >
           {enabled ? "AI enabled" : "AI not configured"}
@@ -112,7 +112,7 @@ export default function NLPromptBox({
         <p className="mt-2 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>
       )}
       {!enabled && (
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-slate-600">
           To enable natural-language queries, set{" "}
           <code className="rounded bg-slate-100 px-1">GEMINI_API_KEY</code> in{" "}
           <code className="rounded bg-slate-100 px-1">.env.local</code> and restart
@@ -121,7 +121,7 @@ export default function NLPromptBox({
             href="https://aistudio.google.com/apikey"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-blue-600 hover:underline"
+            className="text-blue-700 underline"
           >
             aistudio.google.com/apikey
           </a>

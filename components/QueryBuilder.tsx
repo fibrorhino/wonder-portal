@@ -294,7 +294,7 @@ export default function QueryBuilder({
             </div>
           ))}
           {spec.groupBy.length === 0 && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-slate-500">
               Add at least one grouping (e.g. Year).
             </p>
           )}
@@ -303,6 +303,7 @@ export default function QueryBuilder({
           <select
             value=""
             onChange={(e) => addGroup(e.target.value)}
+            aria-label="Add a variable to group results by"
             className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           >
             <option value="">+ Add grouping…</option>
@@ -370,7 +371,7 @@ export default function QueryBuilder({
           </p>
         ) : (
           db.measures.includes("ageAdjustedRate") && (
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-slate-500">
               Age-adjusted rate is unavailable when grouping by age, when
               filtering to one age group or to five-year ages, and with the 15-
               or 31-group race classifications.

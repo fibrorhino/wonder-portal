@@ -7,11 +7,14 @@ import { useState } from "react";
 import type { ResultTable } from "@/lib/wonder/types";
 import { exportCsv, exportXlsx } from "@/lib/export/exporters";
 
+// Dark enough to read on white, on the striped rows and on the tinted total
+// rows alike (WCAG AA, 4.5:1). The lighter shades these replaced looked more
+// "muted" and measured between 2.4:1 and 3.6:1.
 const FLAG_STYLE: Record<string, string> = {
-  suppressed: "text-amber-600 italic",
-  unreliable: "text-orange-600",
-  notApplicable: "text-slate-400",
-  missing: "text-slate-400",
+  suppressed: "text-amber-700 italic",
+  unreliable: "text-orange-700",
+  notApplicable: "text-slate-600 italic",
+  missing: "text-slate-600 italic",
 };
 
 /**
@@ -57,7 +60,7 @@ export default function ResultsTable({ table }: { table: ResultTable }) {
           </button>
           <button
             type="button"
-            onClick={() => exportXlsx(table)}
+            onClick={() => void exportXlsx(table)}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
             Export XLSX
@@ -65,7 +68,14 @@ export default function ResultsTable({ table }: { table: ResultTable }) {
         </div>
       </div>
 
-      <div className="max-h-[28rem] overflow-auto rounded-lg border border-slate-200">
+      {/* Focusable and named, so the scrolling table can be reached and
+          scrolled from the keyboard and is announced as what it is. */}
+      <div
+        className="max-h-[28rem] overflow-auto rounded-lg border border-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        tabIndex={0}
+        role="region"
+        aria-label="Query results table"
+      >
         <table className="min-w-full border-collapse text-sm">
           <thead className="sticky top-0 bg-slate-100">
             <tr>
@@ -112,7 +122,7 @@ export default function ResultsTable({ table }: { table: ResultTable }) {
                             ? cell.value.toLocaleString()
                             : cell.value}
                       {cell.ci && (
-                        <span className="ml-1 text-xs text-slate-400">
+                        <span className="ml-1 text-xs text-slate-600">
                           {cell.ci}
                         </span>
                       )}

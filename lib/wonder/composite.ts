@@ -143,7 +143,10 @@ export async function runComposite(
     // Fill in an age-adjusted rate the source could not supply. The column has
     // to exist first: without it the computed values have nowhere to go, and
     // the join rejects the narrower table as a layout mismatch.
-    if (spec.measures.includes("ageAdjustedRate")) {
+    // Skipped when no source can supply the rate (grouped by age, or an age
+    // filter CDC will not adjust over): the column would be blank from top to
+    // bottom, and the page already says which measures are not in a result.
+    if (spec.measures.includes("ageAdjustedRate") && ageAdjustedBlocker(spec) === null) {
       table = ensureMeasureColumn(table, "ageAdjustedRate", "Age-Adjusted Rate");
       if (needsComputedAdjustment(spec, source)) {
         const filled = await computeAdjustedRates(sub, spec, fetchTable);

@@ -1,8 +1,8 @@
 // Client-side exporters for a ResultTable: CSV (native) and XLSX (SheetJS).
 // We only ever WRITE files here (never parse untrusted input), so the xlsx
-// package's parsing advisory does not apply.
+// package's parsing advisories do not apply. npm has no fixed release of it,
+// which is why `npm audit` keeps listing it.
 
-import * as XLSX from "xlsx";
 import type { ResultTable } from "@/lib/wonder/types";
 
 function tableToMatrix(table: ResultTable): (string | number)[][] {
@@ -60,7 +60,11 @@ export function exportCsv(table: ResultTable, filename = "wonderwall.csv") {
   triggerDownload(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }), filename);
 }
 
-export function exportXlsx(table: ResultTable, filename = "wonderwall.xlsx") {
+export async function exportXlsx(table: ResultTable, filename = "wonderwall.xlsx") {
+  // Loaded when the button is pressed, not with the page. SheetJS is about
+  // 430 KB of script, which was 40% of everything a first visit downloaded,
+  // for a button most visits never press.
+  const XLSX = await import("xlsx");
   const matrix = tableToMatrix(table);
   const ws = XLSX.utils.aoa_to_sheet(matrix);
   const wb = XLSX.utils.book_new();

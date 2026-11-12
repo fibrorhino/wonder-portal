@@ -7,13 +7,21 @@ This version has breaking changes — APIs, conventions, and file structure may 
 # Mortality Data Portal — agent handoff
 
 A query, analysis and visualisation front end for CDC mortality data, run by the
-Johns Hopkins Center for Suicide Prevention. Next.js 16.2.9 (App Router,
+Johns Hopkins Center for Suicide Prevention. Next.js 16.4.6 (App Router,
 Turbopack), React 19, Tailwind v4, TypeScript.
 
 **Repo:** `C:\dev\wonderwall` → `github.com/fibrorhino/wonder-portal` (branch `main`).
 **Live:** `mortality.nestadt.org` and `wonderwall.nestadt.org`, both served by a
 Windows service on this machine through a Cloudflare tunnel. Not Vercel — see
 *CDC blocks data-center IPs* below.
+
+There **is** a Vercel project linked to this repo, and it is easy to mistake for
+the live site. It builds every push (`main` as "production" at
+`wonder-portal-bice.vercel.app`, every other branch as a preview), all of it
+behind Vercel login, none of it attached to the public hostnames. Pages render
+there; CDC queries do not (403). It is useful as a build check and nothing else.
+Merging to `main` therefore changes nothing a visitor sees until someone deploys
+on the desktop.
 
 `README.md` explains **why** the code is the way it is, at length, and is the
 reference when you need the reasoning. This file is the operational layer: what
@@ -26,7 +34,7 @@ anything in `lib/wonder/` or `lib/analysis/`.
 
 | | |
 |---|---|
-| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~230 tests, <1s. Run after **any** change under `lib/`. |
+| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~240 tests, <1s. Run after **any** change under `lib/`. |
 | `npx tsc --noEmit` | Typecheck the app. |
 | `npx eslint app components lib` | Lint. |
 | `NEXT_DIST_DIR=.next-validate npx next build` | **Compile check that does not touch the live build.** Use this to verify; delete `.next-validate` after. |
@@ -82,6 +90,9 @@ Adding a fifth dataset is a session of probing, not an afternoon.
 
 ### CDC's constraints, all enforced in `app/api/wonder/route.ts`
 
+- **Results are cached in memory**: a week for the final files, twelve hours
+  for anything provisional (`lib/cache.ts`). The parts of a combined query are
+  cached separately, so a repeat only re-fetches the provisional part.
 - **≥15 seconds between requests**, or 429. A composite query is 3–4 requests in
   series: ~48s. `maxDuration` is 300; the Cloudflare tunnel gives up at 100s,
   which caps how many sources a composite can have.
@@ -101,12 +112,12 @@ Adding a fifth dataset is a session of probing, not an afternoon.
   cloud address, same request, seconds apart: curl 200; curl with
   `User-Agent: node` 403; Node `fetch` default 403; Node `fetch` with a named
   product token 200. `lib/wonder/userAgent.ts` sets one (`WONDER_USER_AGENT`
-  overrides it). **Not tested:** this request shape from Vercel or Azure. The
-  cloud deployments that were blocked sent a copied Chrome User-Agent plus
-  `origin`/`referer` (see the `CDCwonder` repo): a third shape, also refused.
-  So the hosting conclusion rests on two failing shapes and has not been tried
-  with the one that passes. Do not move hosting on the strength of this without
-  testing from the target host, and do not go back to imitating a browser.
+  overrides it). **Vercel is refused regardless:** on 2026-11-12 a preview
+  build carrying the named User-Agent ran one query from Vercel's `iad1` region
+  and got 403 on all three attempts. So for Vercel the address is the problem
+  and the hosting decision stands; the header only matters from addresses CDC
+  otherwise accepts. Azure and AWS have not been re-tested. Do not go back to
+  imitating a browser.
 - **A 500 with a `<message>` is CDC refusing the query, not CDC being down.**
   It used to be shown as "temporarily unavailable, try again in a minute" and
   counted against `/api/health`. `isQueryRejection()` in `lib/wonder/cdcErrors.ts`
@@ -215,13 +226,22 @@ composite path against a stub fetcher so none of it costs a CDC call.
 
 ## Deploy
 
+On the desktop, after the change is on `main`: run **`tools\deploy.bat`**. It
+asks for an Administrator window, then pulls, stops the app, runs `npm install`
+and `npm run build`, starts the app and checks it answers. The app is stopped
+for the build on purpose (two or three minutes): the build rewrites the folder
+the running app reads, and a dependency upgrade replaces Next.js underneath it.
+It was written without a Windows machine to run it on; the first run is its
+test. By hand, the same thing is:
+
 ```bash
 npm test && npx tsc --noEmit && npx eslint app components lib
-npm run build
+git pull && npm install && npm run build
 net stop WonderPortal && net start WonderPortal
 ```
 
-The user runs the restart. Two WinSW services, both working from `C:\dev\wonderwall`:
+Nothing deploys itself, and the desktop cannot be reached from a cloud session.
+The user runs the deploy. Two WinSW services, both working from `C:\dev\wonderwall`:
 
 - **`WonderPortal`** — `next start -p 3000`.
 - **`WonderTunnel`** — `cloudflared` with `tools/config.yml`, tunnel `wonder-portal`.
@@ -243,10 +263,20 @@ Env (`.env.local`): `GEMINI_API_KEY`, optional `GEMINI_MODEL` override, optional
 
 ## Open items
 
-- **No per-visitor rate cap on `/api/insights`.** The Gemini quota is shared
-  across all visitors; one person clicking repeatedly can exhaust it. The
-  per-model fallback softens this but does not solve it. Billing on the key is
-  the other half.
+- **The Gemini quota is still one shared free-tier allowance.** A per-address
+  cap (`lib/rateLimit.ts`: 30 analyses per ten minutes and 150 a day; 40 and
+  200 for the plain-English box) stops one visitor draining it, but enough
+  visitors together still can. Billing on the key is the other half.
+- **Deploys need a person at the desktop.** A scheduled task that polls `main`
+  and runs `tools\deploy.ps1` would remove that, at the price of giving anyone
+  who can push to `main` code execution on that machine. Not built; a decision
+  for the owner.
+- **Next.js must be kept patched.** This is a public server on Windows, and the
+  2026 advisories against Next 16 include unauthenticated remote code execution
+  on exactly that. Upgraded 16.2.9 to 16.4.6 on 2026-11-12. Run `npm audit`
+  when you are in here; what remains is `xlsx` (no fixed release on npm) and
+  `image-size` inside `pptxgenjs`, both of which only run in the browser to
+  write export files, plus build-time tooling.
 - **Queries are held open for their whole duration.** A combined series is
   ~50 s alone and longer behind other people's queries; past 100 s the tunnel
   drops the visitor (the page now says the query is still running and to run it
