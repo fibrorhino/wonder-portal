@@ -20,6 +20,8 @@ import {
   numericEncode,
 } from "@/lib/tableUtils";
 import { computeRegression } from "@/lib/stats/regression";
+import { collapseRows, isAdditiveMeasure, type Within } from "@/lib/chartData";
+import { isPartialPeriod } from "@/lib/analysis/facts";
 import { chiSquareFromCounts, pearson, spearman } from "@/lib/stats/correlation";
 import { describe, oneWayAnova, trend } from "@/lib/stats/summary";
 
@@ -45,7 +47,27 @@ export default function StatsPanel({
 }) {
   const dims = useMemo(() => dimensionCols(table), [table]);
   const measures = useMemo(() => measureCols(table), [table]);
-  const rows = useMemo(() => dataRows(table), [table]);
+
+  // Incomplete periods are left out of every statistic here, as they are from
+  // the talking points: "2026 (provisional and partial)" is a few months of
+  // deaths, and a regression or a first-to-last change measured through it
+  // reports a collapse that has not happened. The chart still shows them.
+  const { rows, partialLabels, complete } = useMemo(() => {
+    const timeIdx = dims
+      .filter((d) => ["year", "month"].includes(d.column.variableKey ?? ""))
+      .map((d) => d.index);
+    const all = dataRows(table);
+    const isPartial = (r: (typeof all)[number]) => timeIdx.some((i) => isPartialPeriod(cellLabel(r[i])));
+    const kept = all.filter((r) => !isPartial(r));
+    const labels = new Set<string>();
+    for (const r of all) for (const i of timeIdx) if (isPartialPeriod(cellLabel(r[i]))) labels.add(cellLabel(r[i]));
+    return {
+      rows: kept,
+      partialLabels: [...labels],
+      complete: { ...table, rows: kept, rowIsTotal: kept.map(() => false), rowCount: kept.length },
+    };
+  }, [table, dims]);
+  const ratePer = spec?.options?.ratePer ?? 100000;
   const numericDims = useMemo(
     () => dims.filter((d) => NUMERIC_KEYS.includes(d.column.variableKey ?? "")),
     [dims],
@@ -67,17 +89,35 @@ export default function StatsPanel({
   const [rowIdx, setRowIdx] = useState(dims[0]?.index ?? 0);
   const [colIdx, setColIdx] = useState(dims[1]?.index ?? dims[0]?.index ?? 0);
   const [groupIdx, setGroupIdx] = useState(dims[0]?.index ?? 0);
+  // Grouping variables other than the regression's X: one value of each, or
+  // combined when absent from this map.
+  const [within, setWithin] = useState<Within>({});
+  const otherDims = useMemo(() => dims.filter((d) => d.index !== xIdx), [dims, xIdx]);
 
+  // One point per value of X. Every other grouping variable is narrowed to the
+  // value chosen or combined, never pooled: regressing men's and women's counts
+  // as one cloud of fourteen points reported "not significant" for two series
+  // that are each rising significantly.
   const regression = useMemo(() => {
     if (mode !== "regression") return null;
+    const collapsed = collapseRows(complete, [xIdx], yIdx, within, ratePer);
+    if (!collapsed.ok) {
+      return {
+        reason: `${collapsed.reason} Choose a single ${collapsed.names[0]} above.`,
+        reg: null,
+        pearson: null,
+        spearman: null,
+        n: 0,
+      };
+    }
     const pairs: [number, number][] = [];
-    for (const row of rows) {
+    for (const row of collapsed.rows) {
       const nx = numericEncode(table.columns[xIdx]?.variableKey, cellLabel(row[xIdx]));
       const y = cellNumber(row[yIdx]);
       if (nx !== null && y !== null) pairs.push([nx, y]);
     }
-    return { reg: computeRegression(pairs), pearson: pearson(pairs), spearman: spearman(pairs), n: pairs.length };
-  }, [mode, rows, table.columns, xIdx, yIdx]);
+    return { reason: null, reg: computeRegression(pairs), pearson: pearson(pairs), spearman: spearman(pairs), n: pairs.length };
+  }, [mode, complete, table.columns, xIdx, yIdx, within, ratePer]);
 
   const chi = useMemo(() => {
     if (mode !== "chisquare") return null;
@@ -106,26 +146,48 @@ export default function StatsPanel({
     if (mode !== "descriptive") return null;
     const values = rows.map((r) => cellNumber(r[yIdx])).filter((v): v is number => v !== null);
     const d = describe(values);
-    // trend if a numeric time dimension exists: sum measure by that dim label
+    // The trend is over the whole of each period: counts added up, a crude rate
+    // rebuilt from them. It used to add the measure itself across the other
+    // groups, which for a rate is a sum of rates, not a rate.
     const timeDim = numericDims.find((nd) => ["year", "month"].includes(nd.column.variableKey ?? ""));
     let tr = null;
+    let trendNote: string | null = null;
     if (timeDim) {
-      const byLabel = new Map<string, number>();
-      for (const row of rows) {
-        const label = cellLabel(row[timeDim.index]);
-        const y = cellNumber(row[yIdx]) ?? 0;
-        byLabel.set(label, (byLabel.get(label) ?? 0) + y);
+      const collapsed = collapseRows(complete, [timeDim.index], yIdx, {}, ratePer);
+      if (collapsed.ok) {
+        const pts = collapsed.rows
+          .map((row) => {
+            const label = cellLabel(row[timeDim.index]);
+            return { label, value: cellNumber(row[yIdx]), ord: numericEncode(timeDim.column.variableKey, label) ?? 0 };
+          })
+          .filter((p): p is { label: string; value: number; ord: number } => p.value !== null)
+          .sort((a, b) => a.ord - b.ord);
+        tr = trend(pts);
+      } else {
+        trendNote = collapsed.reason;
       }
-      const pts = [...byLabel.entries()]
-        .map(([label, value]) => ({ label, value, ord: numericEncode(timeDim.column.variableKey, label) ?? 0 }))
-        .sort((a, b) => a.ord - b.ord);
-      tr = trend(pts);
     }
-    return { d, tr, measureLabel: table.columns[yIdx]?.label ?? "" };
-  }, [mode, rows, yIdx, numericDims, table.columns]);
+    return {
+      d,
+      tr,
+      trendNote,
+      perPeriod: timeDim?.column.variableKey === "month" ? "Avg monthly change" : "Avg annual change (CAGR)",
+      additive: isAdditiveMeasure(table.columns[yIdx]?.measureKey),
+      measureLabel: table.columns[yIdx]?.label ?? "",
+    };
+  }, [mode, rows, complete, yIdx, numericDims, table.columns, ratePer]);
+
+  const pct = (v: number) => (Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${fmtNum(v, 1)}%` : "n/a");
 
   return (
     <div className="space-y-4">
+      {partialLabels.length > 0 && (
+        <p className="rounded bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          {partialLabels.length === 1
+            ? `${partialLabels[0].replace(/\s*\(.*\)\s*$/, "")} is left out of these statistics: it covers only part of the period, so it is not comparable with the others.`
+            : `${partialLabels.length} incomplete periods are left out of these statistics: they cover only part of the period, so they are not comparable with the others.`}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <ModeButton active={mode === "regression"} onClick={() => setMode("regression")}>Regression / correlation</ModeButton>
         <ModeButton active={mode === "anova"} onClick={() => setMode("anova")}>ANOVA</ModeButton>
@@ -144,7 +206,40 @@ export default function StatsPanel({
             aLabel="X (numeric: year / month / age)" aValue={xIdx} aOptions={dims} onA={setXIdx}
             bLabel="Y (measure)" bValue={yIdx} bOptions={measures} onB={setYIdx}
           />
-          {!regression?.reg || regression.n < 2 ? (
+          {otherDims.length > 0 && (
+            <div className="flex flex-wrap gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="w-full text-xs text-slate-600">
+                One point per {table.columns[xIdx]?.label ?? "X"} value. For each other grouping
+                variable, pick one value or combine them.
+              </p>
+              {otherDims.map((d) => (
+                <label key={d.index} className="block">
+                  <span className="mb-1 block text-xs font-medium text-slate-600">{d.column.label}</span>
+                  <select
+                    value={within[d.index] ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setWithin((prev) => {
+                        const next = { ...prev };
+                        if (v === "") delete next[d.index];
+                        else next[d.index] = v;
+                        return next;
+                      });
+                    }}
+                    className="ctrl"
+                  >
+                    <option value="">All (combined)</option>
+                    {[...new Set(rows.map((r) => cellLabel(r[d.index])))].map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
+          {regression?.reason ? (
+            <Warn>{regression.reason}</Warn>
+          ) : !regression?.reg || regression.n < 2 ? (
             <Warn>Pick a numeric X (year, month, or age group) — categorical dimensions like sex or race can’t be regressed.</Warn>
           ) : (
             <Card>
@@ -316,18 +411,27 @@ export default function StatsPanel({
           ) : (
             <Card>
               <Stat label="n (cells)" value={desc.d.n.toLocaleString()} />
-              <Stat label="Sum" value={fmtNum(desc.d.sum, 1)} />
+              {/* A sum of rates is not a quantity of anything. */}
+              {desc.additive && <Stat label="Sum" value={fmtNum(desc.d.sum, 1)} />}
               <Stat label="Mean" value={fmtNum(desc.d.mean, 2)} />
               <Stat label="Median" value={fmtNum(desc.d.median, 2)} />
               <Stat label="Std. dev." value={fmtNum(desc.d.sd, 2)} />
               <Stat label="Min / Max" value={`${fmtNum(desc.d.min, 2)} / ${fmtNum(desc.d.max, 2)}`} />
               {desc.tr && (
                 <>
-                  <Stat label={`Change ${desc.tr.firstLabel}→${desc.tr.lastLabel}`} value={`${desc.tr.totalChangePct >= 0 ? "+" : ""}${fmtNum(desc.tr.totalChangePct, 1)}%`} />
-                  <Stat label="Avg annual change (CAGR)" value={`${desc.tr.cagrPct >= 0 ? "+" : ""}${fmtNum(desc.tr.cagrPct, 1)}%`} />
+                  <Stat label={`Change ${desc.tr.firstLabel}→${desc.tr.lastLabel}`} value={pct(desc.tr.totalChangePct)} />
+                  <Stat label={desc.perPeriod} value={pct(desc.tr.cagrPct)} />
                 </>
               )}
-              <Note>Summary of the {desc.measureLabel} across the query’s aggregated cells{desc.tr ? "; trend uses the total per period." : "."}</Note>
+              <Note>
+                Summary of the {desc.measureLabel} across the query’s aggregated cells
+                {desc.tr
+                  ? desc.additive
+                    ? "; the change uses the total for each period."
+                    : "; the change uses the rate for each period as a whole, rebuilt from its deaths and population."
+                  : "."}
+                {desc.trendNote ? ` No change over time is shown: ${desc.trendNote}` : ""}
+              </Note>
             </Card>
           )}
         </div>

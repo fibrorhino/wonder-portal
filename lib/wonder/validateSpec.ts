@@ -21,6 +21,36 @@ const RATE_PER_CHOICES = [1000, 10000, 100000, 1000000];
 const MAX_CODES_PER_FILTER = 2000;
 const MAX_CODE_LENGTH = 40;
 
+/**
+ * ICD-10 codes as CDC accepts them.
+ *
+ * CDC refuses a lower-case code outright ("Invalid 'ICD-10 Codes' codes were
+ * found: 'x60'"), and a range is only understood written as X60-X84: the en
+ * dash the preset buttons display, or spaces around the hyphen, used to reach
+ * CDC as an unknown code (or, split on the spaces, as a code that is a lone
+ * "-"). Typed text, shared links and the plain-English box all pass through
+ * here. Verified against the live API 2026-11-20: "X60-X84" accepted, "x60"
+ * refused.
+ */
+export function normalizeIcdCodes(codes: string[]): string[] {
+  return codes
+    .map((c) =>
+      c
+        .replace(/[\u2010-\u2015\u2212]/g, "-")
+        .replace(/\s*-\s*/g, "-")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter((c) => c !== "" && c !== "-");
+}
+
+/** Split what someone typed into the ICD-10 box into codes. */
+export function parseIcdText(text: string): string[] {
+  // Dashes are tightened first, so "X60 - X84" stays one range.
+  const tightened = text.replace(/[\u2010-\u2015\u2212]/g, "-").replace(/\s*-\s*/g, "-");
+  return normalizeIcdCodes(tightened.split(/[,;\s]+/));
+}
+
 const isStringArray = (v: unknown): v is string[] =>
   Array.isArray(v) && v.every((x) => typeof x === "string");
 
@@ -53,7 +83,7 @@ export function normalizeSpec(raw: unknown): QuerySpec | string {
       if (!isStringArray(codes)) return `Filter "${key}" must be a list of values.`;
       if (codes.length > MAX_CODES_PER_FILTER) return `Filter "${key}" has too many values.`;
       if (codes.some((c) => c.length > MAX_CODE_LENGTH)) return `Filter "${key}" has a value that is too long.`;
-      filters[key] = codes;
+      filters[key] = key === "ucdCause" ? normalizeIcdCodes(codes) : codes;
     }
   }
 

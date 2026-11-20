@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { QuerySpec } from "./types";
-import { normalizeSpec, validateSpec } from "./validateSpec";
+import { normalizeSpec, parseIcdText, validateSpec } from "./validateSpec";
 import { buildRequestXml } from "./buildRequest";
 import { EXAMPLE_QUERIES, examplesFor } from "./examples";
 import { DATABASES } from "./db/registry";
@@ -109,4 +109,17 @@ test("every example the site offers passes its own validation", () => {
       assert.equal(validateSpec(spec), null, `${db.id}: ${example.label}`);
     }
   }
+});
+
+test("ICD-10 codes are sent the way CDC accepts them", () => {
+  // CDC refuses "x60" (verified 2026-11-20) and does not know an en dash.
+  assert.deepEqual(parseIcdText("x60, x61"), ["X60", "X61"]);
+  assert.deepEqual(parseIcdText("X60 - X84, U03"), ["X60-X84", "U03"]);
+  assert.deepEqual(parseIcdText("X60–X84; y87.0"), ["X60-X84", "Y87.0"]);
+  assert.deepEqual(parseIcdText("  ,  "), []);
+  // The server applies the same rule to whatever reaches it.
+  const spec = normalizeSpec({ ...good, filters: { ucdCause: ["x60 – x64", "-"] } });
+  assert.deepEqual(typeof spec === "object" && spec.filters.ucdCause, ["X60-X64"]);
+  // Other filters are left exactly as sent.
+  assert.deepEqual(asSpec({ ...good, filters: { injuryIntent: ["2"] } }).filters, { injuryIntent: ["2"] });
 });

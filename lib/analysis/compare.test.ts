@@ -114,3 +114,31 @@ test("comparison falls back to a measure both results carry", () => {
   assert.equal(cmp.measureKey, "deaths");
   assert.equal(cmp.rows[0].diff, 20);
 });
+
+const mk = (labels: string[], deaths: number[]) =>
+  makeTable(
+    [{ key: "injuryMechanism", label: "Mechanism" }],
+    ["deaths"],
+    labels.map((l, i) => [s(l), n(deaths[i])]),
+  );
+
+test("the biggest difference comes first and one-sided rows come last", () => {
+  // A row present in only one result has no difference to rank. It sorted to
+  // the top, above every real movement, because Math.abs(-Infinity) is
+  // Infinity.
+  const A = mk(["Firearm", "Poisoning", "Drowning"], [100, 50, 20]);
+  const B = mk(["Firearm", "Poisoning"], [130, 51]);
+  const cmp = compareTables(A, B);
+  assert.ok(cmp && cmp.aligned);
+  assert.deepEqual(
+    cmp.rows.map((r) => r.labels[0]),
+    ["Firearm", "Poisoning", "Drowning"],
+  );
+  assert.equal(cmp.rows[2].diff, null);
+});
+
+test("only measures both results carry are offered", () => {
+  const A = mk(["x"], [1]);
+  const B = mk(["x"], [2]);
+  assert.deepEqual(compareTables(A, B)?.sharedMeasures, ["deaths"]);
+});

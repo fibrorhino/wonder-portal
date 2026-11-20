@@ -16,6 +16,7 @@ import {
 } from "@/lib/wonder/databases";
 import { getDatabase, variableByKey } from "@/lib/wonder/db/registry";
 import { ageAdjustedBlocker } from "@/lib/wonder/buildRequest";
+import { parseIcdText } from "@/lib/wonder/validateSpec";
 import MultiSelect from "./MultiSelect";
 import { DataUseFootnote, DataUseMark } from "./DataUseNotice";
 import PillSelect from "./PillSelect";
@@ -105,11 +106,17 @@ export default function QueryBuilder({
     setFilters(next);
   };
 
-  const applyIcdText = (text: string) =>
-    applyIcdCodes(
-      text.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
-      text,
-    );
+  // Cleaned the way CDC needs (upper case, ranges as X60-X84); the box keeps
+  // what was typed so the cursor does not jump.
+  const applyIcdText = (text: string) => applyIcdCodes(parseIcdText(text), text);
+
+  // The box shows the codes the query actually uses. It kept only what had been
+  // typed into it, so a query with codes from an example, a shared link or the
+  // history list showed an empty box, and a highlighted "All Manners", while
+  // the query was in fact limited to those codes.
+  const icdCodes = spec.filters.ucdCause ?? [];
+  const icdShown =
+    parseIcdText(icdText).join(",") === icdCodes.join(",") ? icdText : icdCodes.join(", ");
 
   const manner = spec.filters.injuryIntent ?? [];
   const showNonInjury = manner.includes(NATURAL_MANNER_CODE);
@@ -143,10 +150,18 @@ export default function QueryBuilder({
     (v) => !spec.groupBy.includes(v.key),
   );
 
-  const activeCause = useMemo(
-    () => CAUSE_KEYS.filter((k) => spec.filters[k]?.length),
-    [spec.filters],
-  );
+  // Cause frameworks in use, not cause variables: manner of death and injury
+  // mechanism are one framework, and "suicide by firearm" uses both. Counting
+  // variables showed a warning that the query was invalid on the "Firearm
+  // suicide trend" example, which is a valid query.
+  const activeCause = useMemo(() => {
+    const used = (k: string) => Boolean(spec.filters[k]?.length);
+    return [
+      used("ucdCause") && "ICD-10 codes",
+      (used("injuryIntent") || used("injuryMechanism")) && "manner of death / injury mechanism",
+      used("leadingCauses") && "leading causes",
+    ].filter(Boolean);
+  }, [spec.filters]);
 
   return (
     <div className="space-y-5">
@@ -163,7 +178,14 @@ export default function QueryBuilder({
           selected={manner}
           onChange={(codes) => setInjuryFilter("injuryIntent", codes)}
           allLabel="All Manners"
+          allPressed={manner.length === 0 && icdCodes.length === 0}
         />
+        {icdCodes.length > 0 && (
+          <p className="mt-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-900">
+            Limited to ICD-10 codes {icdCodes.length > 6 ? `${icdCodes.slice(0, 6).join(", ")} and ${icdCodes.length - 6} more` : icdCodes.join(", ")} (under
+            Advanced). Choosing a manner of death replaces them.
+          </p>
+        )}
 
         {/* Advanced: ICD-10 codes */}
         <details className="mt-3 rounded-lg border border-slate-200">
@@ -184,7 +206,7 @@ export default function QueryBuilder({
               ))}
             </div>
             <input
-              value={icdText}
+              value={icdShown}
               onChange={(e) => applyIcdText(e.target.value)}
               placeholder="e.g. X60-X84, U03, Y87.0 — leave blank for all causes"
               className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"

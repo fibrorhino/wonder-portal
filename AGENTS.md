@@ -34,7 +34,7 @@ anything in `lib/wonder/` or `lib/analysis/`.
 
 | | |
 |---|---|
-| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~240 tests, <1s. Run after **any** change under `lib/`. |
+| `npm test` | Compiles `tsconfig.test.json` → `.test-out`, runs Node's built-in runner. ~255 tests, a few seconds. Run after **any** change under `lib/`. |
 | `npx tsc --noEmit` | Typecheck the app. |
 | `npx eslint app components lib` | Lint. |
 | `NEXT_DIST_DIR=.next-validate npx next build` | **Compile check that does not touch the live build.** Use this to verify; delete `.next-validate` after. |
@@ -133,6 +133,13 @@ Adding a fifth dataset is a session of probing, not an afternoon.
   assuming the request was honoured. `<caveat>` appears in two places: about
   forty *definitions* under `<dataset>` (each with a `<rule>`), and the handful
   that apply under `<response><caveats>`. Only the second is shown.
+- **ICD-10 codes must be upper case.** CDC refuses "x60" outright; ranges
+  work only as "X60-X84" (no en dash, no spaces). `normalizeIcdCodes()` in
+  `lib/wonder/validateSpec.ts` cleans every query on the server, and the
+  builder uses the same parser as you type. Verified 2026-11-20.
+- **Month labels differ between files**: "May, 2022" in the final file,
+  "May., 2026" in the provisional one. `monthOfYear()` in `lib/chartData.ts`
+  gives one spelling per month.
 - **A year CDC has not loaded yet is refused** ("Invalid 'Year/Month' codes were
   found: '2027'"). The provisional file lags the calendar every January, and the
   composite names its years explicitly, so `lib/wonder/composite.ts` drops the
@@ -210,6 +217,23 @@ so the 429 log line is the only authoritative record of which limit was hit.
   the server carries on, finishes, and caches. Do not add a timeout shorter
   than CDC's worst case (76 s measured for the provisional file by single year
   of age). That turns "slow, then cached" into "fails every time".
+- **A chart shows two grouping variables; a table can have five.** Anything
+  not on the axis or the series must go through `collapseRows()` in
+  `lib/chartData.ts`: counts add, population adds only across variables that
+  split it, a crude rate is rebuilt from deaths and population, and an
+  age-adjusted rate is never combined (the reader picks one value instead).
+  Plotting rows directly drew a year × sex × race table as spikes, and the
+  stats tab pooled men and women into one "not significant" regression.
+  The chart, the stats tab and the PowerPoint export all use it; the slide is
+  built from the series the screen drew, not from the rows again.
+- **Rates are not parts of a whole.** No pie, donut, treemap or sunburst of a
+  rate, and no stacked bars or stacked areas of one: the chart says why and
+  draws side by side instead.
+- **Plotly needs every category axis declared**, both of them on a heatmap.
+  An "incomplete" marker pinned to a label on a numeric axis logs an error.
+- **Joinpoint search is exhaustive and was cubic.** `MAX_KNOT_PLACEMENTS` in
+  `lib/stats/joinpoint.ts` thins candidate knots on long (monthly) series;
+  264 points with three joinpoints froze the tab for minutes before.
 - **Windows shell heredocs mangle backslashes** — `\b` becomes 0x08, `\n` a real
   newline, and a NUL byte once landed in a source file this way. Use the file
   editing tools for anything containing regexes or escapes, not shell heredocs.

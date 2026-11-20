@@ -45,6 +45,7 @@ export default function MultiSelect({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         className="flex w-full items-center justify-between px-3 py-2 text-left"
       >
         <span className="text-sm font-medium text-slate-700">{title}</span>

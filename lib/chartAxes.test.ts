@@ -35,3 +35,10 @@ test("log only applies to the measure axis, never to the category axis", () => {
   assert.equal(horizontal.x, "log", "the measure is on x");
   assert.equal(horizontal.y, "category");
 });
+
+test("a heatmap declares both axes as categories", () => {
+  // Its rows are the series values: years, some with a provisional note.
+  assert.deepEqual(axisTypes("heatmap", false), { x: "category", y: "category" });
+  // A log scale has no meaning on a category axis.
+  assert.equal(axisTypes("heatmap", true).y, "category");
+});
