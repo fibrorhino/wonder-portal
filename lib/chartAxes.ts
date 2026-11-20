@@ -26,7 +26,10 @@ export function axisTypes(
   const numericX = NUMERIC_X.has(chartType);
 
   const xIsCategory = !horizontal && !numericX;
-  const yIsCategory = horizontal;
+  // A heatmap has categories on both axes: the series values run down y. Left
+  // undefined, y was inferred as linear from "2024" and the provisional years
+  // ("2025 (provisional)") could not be placed: Plotly drew rows of NaN height.
+  const yIsCategory = horizontal || chartType === "heatmap";
 
   return {
     x: xIsCategory ? "category" : horizontal && logY ? "log" : undefined,

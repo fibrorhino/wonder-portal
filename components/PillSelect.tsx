@@ -11,12 +11,17 @@ export default function PillSelect({
   selected,
   onChange,
   allLabel,
+  allPressed,
 }: {
   options: VariableValue[];
   selected: string[];
   onChange: (codes: string[]) => void;
   allLabel?: string;
+  /** Whether "all" is the current state. Defaults to nothing being selected,
+   *  which is wrong when another control narrows the same thing. */
+  allPressed?: boolean;
 }) {
+  const allOn = allPressed ?? selected.length === 0;
   const toggle = (code: string) => {
     onChange(
       selected.includes(code)
@@ -49,8 +54,8 @@ export default function PillSelect({
         <button
           type="button"
           onClick={() => onChange([])}
-          aria-pressed={selected.length === 0}
-          className={pill(selected.length === 0)}
+          aria-pressed={allOn}
+          className={pill(allOn)}
         >
           {allLabel}
         </button>

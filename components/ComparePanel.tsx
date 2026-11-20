@@ -101,7 +101,9 @@ export default function ComparePanel({
             onChange={(e) => setMeasure(e.target.value as MeasureKey)}
             className="rounded-lg border border-slate-300 px-2 py-1 text-xs"
           >
-            {MEASURE_OPTIONS.map((m) => (
+            {/* Only what both results carry: offering the others did nothing
+                but snap back to the measure already shown. */}
+            {MEASURE_OPTIONS.filter((m) => cmp.sharedMeasures.includes(m.key)).map((m) => (
               <option key={m.key} value={m.key}>
                 {m.label}
               </option>
@@ -152,7 +154,12 @@ export default function ComparePanel({
       )}
 
       {cmp.aligned && (
-        <div className="max-h-[26rem] overflow-auto rounded-lg border border-slate-200">
+        <div
+          className="max-h-[26rem] overflow-auto rounded-lg border border-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          tabIndex={0}
+          role="region"
+          aria-label="Comparison table"
+        >
           <table className="min-w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-slate-100">
               <tr>
@@ -203,7 +210,7 @@ export default function ComparePanel({
 
       <p className="text-xs text-slate-500">
         Sorted by the size of the difference. ▲ means B is higher than A. Rows present in only
-        one result show “—”. Counts are compared as returned; suppressed cells (1–9 deaths) are
+        one result show “—” and are listed last. Counts are compared as returned; suppressed cells (1–9 deaths) are
         missing from both sides and are not interpolated.
       </p>
     </div>

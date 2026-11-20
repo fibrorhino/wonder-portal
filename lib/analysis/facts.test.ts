@@ -574,3 +574,18 @@ test("many partial periods are given as a span, not a list", () => {
   assert.match(caveat!, /The 5 periods from Feb\., 2026 to Jun\., 2026 cover only part/);
   assert.ok(!/partial\) and/.test(points.join("\n")), points.join("\n"));
 });
+
+test("the 1999-2020 file's bridged race divides the population like any race variable", () => {
+  // Left off the list of population-splitting variables, so a D76 query by
+  // race never got an overall rate.
+  const t = makeTable(
+    [{ key: "raceBridged", label: "Race (Bridged, 4 groups)" }],
+    ["deaths", "population"],
+    [
+      [s("White"), n(800), n(80_000_000)],
+      [s("Black or African American"), n(200), n(20_000_000)],
+    ],
+  );
+  const points = talkingPoints(t, { ...spec(["raceBridged"]), database: "D76" });
+  assert.match(points[0], /an overall rate of 1\.0 per 100,000/, points[0]);
+});

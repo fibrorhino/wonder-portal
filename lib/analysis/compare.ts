@@ -23,6 +23,8 @@ export interface ComparisonRow {
 }
 
 export interface Comparison {
+  /** Measures both results carry, in preference order: what can be compared on. */
+  sharedMeasures: MeasureKey[];
   /** True when the two tables share a grouping and rows could be aligned. */
   aligned: boolean;
   /** Set when the two results come from different datasets. */
@@ -116,6 +118,7 @@ export function compareTables(
   // would look authoritative either way.
   if (datasets && datasets.a && datasets.b && datasets.a !== datasets.b) {
     return {
+      sharedMeasures: shared,
       aligned: false,
       datasetMismatch: { a: datasets.a, b: datasets.b },
       note: "These two results come from different datasets, so they cannot be compared. Provisional data undercounts recent periods and is revised upward, so any difference against the final file would reflect processing lag rather than a real change. Pin two results from the same dataset instead.",
@@ -136,6 +139,7 @@ export function compareTables(
 
   if (!sameGrouping) {
     return {
+      sharedMeasures: shared,
       aligned: false,
       note: `These queries group differently (${aDims.join(" × ") || "none"} vs ${bDims.join(" × ") || "none"}), so individual rows cannot be matched up. Only the totals are comparable.`,
       dimensionLabels: [],
@@ -168,9 +172,14 @@ export function compareTables(
   });
 
   // Biggest absolute movement first — that is what a reader is looking for.
-  rows.sort((x, y) => Math.abs(y.diff ?? -Infinity) - Math.abs(x.diff ?? -Infinity));
+  // Rows with nothing to compare (present on one side only, or suppressed)
+  // go last. `Math.abs(diff ?? -Infinity)` used to put them first: the
+  // absolute value of -Infinity is +Infinity.
+  const size = (r: ComparisonRow) => (r.diff === null ? -1 : Math.abs(r.diff));
+  rows.sort((x, y) => size(y) - size(x));
 
   return {
+    sharedMeasures: shared,
     aligned: true,
     dimensionLabels: dimensionCols(a).map((d) => d.column.label),
     measureKey,

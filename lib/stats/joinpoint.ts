@@ -132,12 +132,45 @@ const designRow = (x: number, knots: number[]) => [
   ...knots.map((t) => Math.max(0, x - t)),
 ];
 
+/**
+ * The most knot placements tried for any one number of joinpoints.
+ *
+ * The search is exhaustive, and the number of placements grows with the cube
+ * of the series length for three joinpoints. Twenty-eight annual points is
+ * about 1,800 placements; 264 monthly points (the 1999-2020 file by month) is
+ * about 2.8 million, which froze the browser tab for minutes. Above this
+ * budget the candidate positions are thinned evenly instead, so a long series
+ * gets a coarser search rather than none. Annual series never reach it.
+ */
+export const MAX_KNOT_PLACEMENTS = 4000;
+
+function choose(n: number, k: number): number {
+  if (k < 0 || k > n) return 0;
+  let c = 1;
+  for (let i = 0; i < k; i++) c = (c * (n - i)) / (i + 1);
+  return c;
+}
+
+/** At most `limit` evenly spaced items, always including the first and last. */
+function thin<T>(items: T[], limit: number): T[] {
+  if (items.length <= limit) return items;
+  if (limit <= 1) return items.slice(0, limit);
+  const out: T[] = [];
+  for (let i = 0; i < limit; i++) out.push(items[Math.round((i * (items.length - 1)) / (limit - 1))]);
+  return [...new Set(out)];
+}
+
 /** All ways to choose `count` knots from the interior points, respecting a minimum run. */
 function knotCombinations(xs: number[], count: number, minRun: number): number[][] {
   if (count === 0) return [[]];
   const out: number[][] = [];
   // A knot sits on an observed x; the first and last minRun points cannot hold one.
-  const candidates = xs.slice(minRun - 1, xs.length - minRun + 1);
+  let candidates = xs.slice(minRun - 1, xs.length - minRun + 1);
+  // Keep the search within budget by thinning the candidates, never by
+  // giving up on the joinpoint count.
+  let keep = candidates.length;
+  while (keep > count && choose(keep, count) > MAX_KNOT_PLACEMENTS) keep--;
+  candidates = thin(candidates, keep);
   const walk = (start: number, chosen: number[]) => {
     if (chosen.length === count) {
       out.push([...chosen]);
@@ -325,8 +358,13 @@ export function fitTrend(points: TrendPoint[], maxJoinpoints = 0): TrendFit | nu
   return best;
 }
 
-/** "1.8% per year" / "down 2.4% per year" */
-export function describeApc(apc: number): string {
+/**
+ * "up 1.8% per year" / "down 2.4% per year".
+ *
+ * @param per what one step of x is. A trend fitted along an age axis is a
+ *   change per year of age, not per calendar year, and must say so.
+ */
+export function describeApc(apc: number, per = "year"): string {
   const dir = apc >= 0 ? "up" : "down";
-  return `${dir} ${Math.abs(apc).toFixed(1)}% per year`;
+  return `${dir} ${Math.abs(apc).toFixed(1)}% per ${per}`;
 }

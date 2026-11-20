@@ -109,3 +109,35 @@ test("intervals widen as the series shortens", () => {
   const width = (c: { low: number; high: number }) => c.high - c.low;
   assert.ok(width(short.segments[0].apcCi) > width(long.segments[0].apcCi));
 });
+
+test("a long monthly series is searched within budget instead of freezing the page", () => {
+  // 264 points, as the 1999-2020 file grouped by month returns. Three
+  // joinpoints by exhaustive search was ~2.8 million regressions.
+  const n = 264;
+  const values = Array.from({ length: n }, (_, i) =>
+    1000 * Math.exp(0.004 * i - (i > 150 ? 0.01 * (i - 150) : 0)) * (1 + 0.04 * Math.sin(i)),
+  );
+  const started = Date.now();
+  const fit = fitTrend(series(values), 3);
+  const ms = Date.now() - started;
+  assert.ok(fit, "still fits");
+  assert.ok(ms < 5000, `took ${ms} ms`);
+  // The bend near point 150 is still found by the thinned search.
+  assert.ok(fit!.segments.length >= 2);
+});
+
+test("short annual series get exactly the search they always did", () => {
+  // 28 annual points is well under the budget, so thinning must not change
+  // which bends are found.
+  const up = Array.from({ length: 14 }, (_, i) => 100 * 1.04 ** i);
+  const down = Array.from({ length: 14 }, (_, i) => up[13] * 0.97 ** (i + 1));
+  const fit = fitTrend(series([...up, ...down]), 3);
+  assert.ok(fit);
+  assert.equal(fit!.segments.length, 2);
+  assert.equal(fit!.segments[0].endLabel, series([...up, ...down])[13].label);
+});
+
+test("the unit of a trend is stated, not assumed to be a calendar year", () => {
+  assert.equal(describeApc(1.25, "year of age"), "up 1.3% per year of age");
+  assert.equal(describeApc(-0.5), "down 0.5% per year");
+});

@@ -40,7 +40,7 @@ import { decomposeSeasonality, describeSeasonality, type Decomposition, type Mon
 // denominator a multi-year crude rate needs (and what WONDER itself uses).
 // Month is NOT — the population repeats for every month of a year.
 // ---------------------------------------------------------------------------
-const POPULATION_PARTITIONING = new Set([
+export const POPULATION_PARTITIONING: ReadonlySet<string> = new Set([
   "year",
   "sex",
   "ageTen",
@@ -49,6 +49,10 @@ const POPULATION_PARTITIONING = new Set([
   "race6",
   "race15",
   "race31",
+  // The 1999-2020 file's race variable. It splits the population exactly as
+  // the single-race ones do; leaving it out meant that file never got an
+  // overall rate, or a rate per year, when the query also grouped by race.
+  "raceBridged",
   "hispanicOrigin",
 ]);
 
